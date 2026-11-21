@@ -1,0 +1,80 @@
+--- a/recomp/runtime/title.c
++++ b/recomp/runtime/title.c
+@@ -29,13 +29,23 @@
+   return value;
+ }
+ 
++#ifdef __linux__
++extern const Title *jd_builtin_title(const char *path) __attribute__((weak));
++#endif
++
+ const Title *title_open(const char *path) {
+-  void *library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+-  if (!library) {
+-    fprintf(stderr, "stop: can't load the title's native code: %s\n", dlerror());
+-    exit(10);
++  const Title *found = 0;
++#ifdef __linux__
++  if (jd_builtin_title) found = jd_builtin_title(path);
++#endif
++  if (!found) {
++    void *library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
++    if (!library) {
++      fprintf(stderr, "stop: can't load the title's native code: %s\n", dlerror());
++      exit(10);
++    }
++    found = dlsym(library, TITLE_SYMBOL);
+   }
+-  const Title *found = dlsym(library, TITLE_SYMBOL);
+   if (!found) {
+     fprintf(stderr, "stop: %s isn't a title's native code\n", path);
+     exit(10);
+--- a/recomp/runtime/remote_link_linux.c
++++ b/recomp/runtime/remote_link_linux.c
+@@ -290,7 +290,11 @@
+   return 0;
+ }
+ 
++extern int jd_couch_bridge_start(void) __attribute__((weak));
++static int uses_couch_bridge;
++
+ void link_backend_search(void) {
++  if (uses_couch_bridge) return;
+   if (__atomic_exchange_n(&searching, 1, __ATOMIC_SEQ_CST)) return;
+   pthread_t thread;
+   pthread_create(&thread, 0, search, 0);
+@@ -336,6 +340,8 @@
+ }
+ 
+ void link_backend_start(int mode) {
++  uses_couch_bridge = jd_couch_bridge_start && jd_couch_bridge_start();
++  if (uses_couch_bridge) return;
+   (void)mode;
+   int taken = link_linux_take_over(getenv("WII_RECOMP_LINKS"));
+   unsetenv("WII_RECOMP_LINKS");
+--- a/recomp/runtime/window.c
++++ b/recomp/runtime/window.c
+@@ -76,7 +76,15 @@
+   fullscreen = on;
+ }
+ 
++#ifdef __linux__
++extern int jd_couch_test_key(int escape, int enter) __attribute__((weak));
++#endif
++
+ static void on_key(GLFWwindow *from, int key, int scancode, int action, int mods) {
++#ifdef __linux__
++  if (action == GLFW_PRESS && jd_couch_test_key &&
++      jd_couch_test_key(key == GLFW_KEY_ESCAPE, key == GLFW_KEY_ENTER)) return;
++#endif
+   (void)from; (void)scancode;
+   if (action == GLFW_REPEAT) return;
+   if (action == GLFW_PRESS && (key == GLFW_KEY_F11 || (key == GLFW_KEY_ENTER && (mods & GLFW_MOD_ALT)))) {
+@@ -158,6 +166,7 @@
+   gx_backend_choose();
+   gx_backend->window_prepare();
+   glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_FALSE);  // The game draws 640x456; 4x the pixels adds cost, not detail.
++  glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+   // The console's own setting says whether the TV is widescreen (IPL.AR), and games draw
+   // for it, so the window has that shape and keeps it when resized.
+   uint8_t widescreen = 0;

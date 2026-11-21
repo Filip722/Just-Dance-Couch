@@ -1,0 +1,12 @@
+--- a/recomp/runtime/pads.c
++++ b/recomp/runtime/pads.c
+@@ -65,7 +65,9 @@
+   SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
+   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_SWITCH, "1");
++#ifdef SDL_HINT_JOYSTICK_HIDAPI_SWITCH2
+   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_SWITCH2, "1");
++#endif
+   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_JOY_CONS, "1");
+   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_COMBINE_JOY_CONS, "1");  // A pair in the hands is one controller.
+   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_VERTICAL_JOY_CONS, "0");  // One Joy-Con alone is held sideways.

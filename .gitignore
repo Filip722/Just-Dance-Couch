@@ -1,0 +1,15 @@
+__pycache__/
+*.rvz
+*.iso
+*.wbfs
+*.wad
+*.wrd
+*.so
+*.o
+*.dol
+*.elf
+/build/
+/cache/
+/discs/
+/extracted/
+/saves/

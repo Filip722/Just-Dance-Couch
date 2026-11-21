@@ -1,0 +1,36 @@
+--- a/recomp/runtime/gx_fifo.c
++++ b/recomp/runtime/gx_fifo.c
+@@ -764,7 +764,9 @@
+   uint32_t write = hw_peek(PI_FIFO_WRITE, 4) & PI_ADDRESS_MASK;
+   uint32_t base = hw_peek(PI_FIFO_BASE, 4) & PI_ADDRESS_MASK;
+   uint32_t limit = ring_limit(hw_peek(PI_FIFO_END, 4) & PI_ADDRESS_MASK);
+-  if (write >= limit) write = base;
++  // Only the ring boundary wraps. A redirected pipe can start above the end
++  // register, such as when the SDK streams vertices directly to MEM2.
++  if (write == limit) write = base;
+   memcpy(host(write | 0x80000000u), burst, BURST_BYTES);
+   write += BURST_BYTES;
+   // The game reads a display list's size from the write position, and the Mii face
+--- a/test/c/test_fifo.c
++++ b/test/c/test_fifo.c
+@@ -40,7 +40,20 @@
+   for (int i = 0; i < 8; i++) graphics_write(PIPE_FIRST, 0, 4);
+   CHECK_EQ(hw_peek(PI_FIFO_WRITE, 4), BASE + 32);
+ 
++  // The SDK redirects the write pipe to a vertex buffer in MEM2 using this end value.
++  enum { REDIRECT_END = 0x04000000, VERTICES = MEM2_START + 32 };
++  hw_poke(PI_FIFO_BASE, 0, 4);
++  hw_poke(PI_FIFO_END, REDIRECT_END, 4);
++  hw_poke(PI_FIFO_WRITE, VERTICES, 4);
++  wr32(0x80000000u, 0x534a4f45u);
++  for (int i = 0; i < 8; i++) graphics_write(PIPE_FIRST, 0x12345678u, 4);
++  CHECK_EQ(hw_peek(PI_FIFO_WRITE, 4), VERTICES + 32);
++  CHECK_EQ(rd32(0x80000000u | VERTICES), 0x12345678u);
++  CHECK_EQ(rd32(0x80000000u), 0x534a4f45u);
++
+   // The live FIFO turns over at once, at the 32-byte boundary, not at END.
++  hw_poke(PI_FIFO_BASE, BASE, 4);
++  hw_poke(PI_FIFO_END, END, 4);
+   write_pair(CP_FIFO_BASE, BASE);
+   hw_poke(CP_CONTROL, CONTROL_LINK, 2);
+   hw_poke(PI_FIFO_WRITE, LIMIT - 32, 4);

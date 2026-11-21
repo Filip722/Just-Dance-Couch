@@ -1,0 +1,128 @@
+--- a/recomp/runtime/ios.c
++++ b/recomp/runtime/ios.c
+@@ -65,8 +65,7 @@
+   int file = device < 0 && !is_device ? files_open(path, rd32(guest(request) + 16)) : IOS_ENOENT;
+   if (device >= 0 || file >= 0) fprintf(stderr, "ios open %s -> ok\n", path);
+   else fprintf(stderr, "ios open %s -> %d\n", path, file);
+-  // /dev/usb/ven is only in IOS 57 to 59. The IOS we present has none, as on a Wii running it.
+-  if (!strcmp(path, "/dev/usb/ven")) gap_hit("ios.dev_usb_ven", 0);
++  if (device < 0 && !strcmp(path, "/dev/usb/ven")) gap_hit("ios.dev_usb_ven", 0);
+   if (device < 0 && file < 0) return file;
+   for (int fd = 3; fd < MAX_OPEN; fd++) {
+     if (!open_device[fd] && !open_file[fd]) {
+--- a/recomp/runtime/ios.h
++++ b/recomp/runtime/ios.h
+@@ -38,6 +38,8 @@
+ int sdio_request(uint32_t command, uint32_t request);
+ int usb_oh0_request(uint32_t command, uint32_t request);
+ int usb_hid_request(uint32_t command, uint32_t request);
++int usb_ven_request(uint32_t command, uint32_t request);
++void usb_ven_closed(void);
+ int usb_kbd_request(uint32_t command, uint32_t request);
+ int aes_request(uint32_t command, uint32_t request);
+ int sha_request(uint32_t command, uint32_t request);
+--- a/recomp/runtime/devices.c
++++ b/recomp/runtime/devices.c
+@@ -40,6 +40,7 @@
+   // by its IDs, or one this IOS doesn't have, and isn't found.
+   {"/dev/usb/oh0", 0, usb_oh0_request},
+   {"/dev/usb/hid", 0, usb_hid_request},
++  {"/dev/usb/ven", 0, usb_ven_request, usb_ven_closed},
+   {"/dev/usb/kbd", 0, usb_kbd_request},
+   {"/dev/net/kd/request", 0, net_kd_request},
+   {"/dev/net/kd/time", 0, net_kd_time},
+@@ -56,6 +57,8 @@
+ enum { DEVICE_COUNT = sizeof devices / sizeof devices[0] };
+ 
+ int ios_find_device(const char *path) {
++  // IOS 57 through 59 expose the USB vendor-device manager.
++  if (!strcmp(path, "/dev/usb/ven") && (title->ios_version < 57 || title->ios_version > 59)) return -1;
+   for (int i = 0; i < DEVICE_COUNT; i++) {
+     const IosDevice *device = &devices[i];
+     if (device->prefix ? !strncmp(path, device->name, strlen(device->name)) : !strcmp(path, device->name)) return i;
+--- a/recomp/runtime/usb.c
++++ b/recomp/runtime/usb.c
+@@ -4,8 +4,7 @@
+ // and a request that waits for something to be plugged in waits for good.
+ //
+ // Request numbers, argument layouts and answers are from WiiBrew's /dev/usb/oh0 and
+-// /dev/usb/kbd pages and Dolphin's OH0.cpp and HIDv4.cpp, for the IOS we present (36):
+-// it has oh0, the older HID interface and the keyboard, and no /dev/usb/ven.
++// /dev/usb/kbd pages and Dolphin's OH0.cpp, HIDv4.cpp and USBV5.cpp.
+ #include <stdio.h>
+ 
+ #include "cpu.h"
+@@ -139,6 +138,49 @@
+   }
+ }
+ 
++// The vendor-device manager in IOS 57–59. Empty USB ports report zero devices.
++enum {
++  VEN_GET_VERSION = 0, VEN_GET_DEVICE_CHANGE = 1, VEN_SHUTDOWN = 2, VEN_ATTACH_FINISH = 6,
++  VEN_VERSION = 0x50001, VEN_VERSION_BYTES = 0x20, VEN_DEVICE_LIST_BYTES = 0x180,
++};
++static int ven_list_due = 1;
++static uint32_t ven_waiting_change;
++
++void usb_ven_closed(void) {
++  if (ven_waiting_change) ios_complete(ven_waiting_change, 0);
++  ven_waiting_change = 0;
++  ven_list_due = 1;
++}
++
++int usb_ven_request(uint32_t command, uint32_t request) {
++  if (command != IOS_IOCTL) return IOS_UNHANDLED;
++  uint32_t code = rd32(request + 12), in = rd32(request + 16), in_bytes = rd32(request + 20);
++  uint32_t out = rd32(request + 24), out_bytes = rd32(request + 28);
++  if (in || in_bytes) return IOS_UNHANDLED;
++  switch (code) {
++    case VEN_GET_VERSION:
++      if (!out || out_bytes != VEN_VERSION_BYTES) return IOS_EINVAL;
++      wr32(guest(out), VEN_VERSION);
++      return 0;
++    case VEN_GET_DEVICE_CHANGE:
++      if (!out || out_bytes != VEN_DEVICE_LIST_BYTES || ven_waiting_change) return IOS_EINVAL;
++      if (ven_list_due) {
++        ven_list_due = 0;
++        return 0;
++      }
++      ven_waiting_change = request;
++      return IOS_NO_REPLY;
++    case VEN_SHUTDOWN:
++      if (out || out_bytes) return IOS_EINVAL;
++      usb_ven_closed();
++      return 0;
++    case VEN_ATTACH_FINISH:
++      return 0;
++    default:
++      return IOS_UNHANDLED;
++  }
++}
++
+ // /dev/usb/kbd: reading an event waits until a keyboard sends one, so with none plugged
+ // in it waits for good, as WiiBrew describes. Writes set the keyboard's lights, which
+ // IOS accepts with or without one. Reads, seeks and ioctlvs always fail.
+--- a/test/c/test_ios_rare.c
++++ b/test/c/test_ios_rare.c
+@@ -203,6 +203,21 @@
+   make_ioctl(REQUEST, 3, IN, 8, 0, 0);
+   CHECK_EQ((uint32_t)usb_hid_request(IOS_IOCTL, REQUEST), (uint32_t)IOS_EINVAL);
+ 
++  // /dev/usb/ven: the native microphone client needs the v5 service with empty ports.
++  make_ioctl(REQUEST, 0, 0, 0, OUT, 0x20);
++  CHECK_EQ(usb_ven_request(IOS_IOCTL, REQUEST), 0);
++  CHECK_EQ(rd32(OUT), 0x50001);
++  make_ioctl(REQUEST, 1, 0, 0, OUT, 0x180);
++  CHECK_EQ(usb_ven_request(IOS_IOCTL, REQUEST), 0);
++  make_ioctl(REQUEST, 6, 0, 0, 0, 0);
++  CHECK_EQ(usb_ven_request(IOS_IOCTL, REQUEST), 0);
++  make_ioctl(BUFFERS, 1, 0, 0, OUT, 0x180);
++  CHECK_EQ(usb_ven_request(IOS_IOCTL, BUFFERS), IOS_NO_REPLY);
++  make_ioctl(REQUEST, 2, 0, 0, 0, 0);
++  CHECK_EQ(usb_ven_request(IOS_IOCTL, REQUEST), 0);
++  CHECK_EQ(next_reply(), BUFFERS & 0x7fffffff);
++  CHECK_EQ(rd32(BUFFERS + 4), 0);
++
+   // /dev/usb/kbd: an event waits for a keyboard, lights are fine, reads fail.
+   make_ioctl(REQUEST, 0, 0, 0, OUT, 16);
+   CHECK_EQ(usb_kbd_request(IOS_IOCTL, REQUEST), IOS_NO_REPLY);
