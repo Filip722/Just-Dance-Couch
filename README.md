@@ -4,7 +4,7 @@ A native Linux x86-64 launcher for locally owned Just Dance Wii backups. It buil
 
 ## Current state
 
-- The fullscreen picker opens on **Just Dance 2014** with five columns and three visible rows. Scroll down to see the rest of the edition. Press Right at the end of any row to see **Just Dance 2015**. Press Left at the start of a 2015 row to go back. The pages list 48 and 42 disc songs, respectively. Every song has a thumbnail. Highlighting a tile plays its coach video and audio preview. The launcher warms the edition you are browsing.
+- The fullscreen picker opens on **Just Dance 2014** with five columns and three visible rows. Scroll down to see the rest of the edition. Press Right at the end of any row to see **Just Dance 2015**. Press Left at the start of a 2015 row to go back. The pages list 48 and 42 disc songs, respectively. Each edition is sorted alphabetically by title. Every thumbnail is a still from the song’s coach video. Highlighting a tile plays its coach video and audio preview. The launcher warms the edition you are browsing.
 - **Just Dance 2014 (USA)** launches all 48 listed routines from the original game. Loopback tests verified scoring in **Just Dance**, **Get Lucky**, and **#thatPOWER**, the **Get Lucky** recap, and return to the selected row after completion and cancellation.
 - **Just Dance 2015 (USA)** launches all 42 listed routines from the original game. The launcher starts the 2015 worker when you open its page and keeps the boot and lobby screens hidden. Loopback tests verified scoring in **4x4** and **Happy**, cancellation from **4x4**, and return to the picker after the **Happy** recap.
 - **Just Dance 3 (USA, revision 1)** reaches its original song carousel in strict-native mode after a disc streaming fix. **Pump It** reached gameplay through the stock menu. **Take On Me** loaded its standard choreography and reached the original lobby.
@@ -100,11 +100,3 @@ All 17 backups produced video under the planning reference run. Each disc is USA
 | Just Dance Summer Party | SJ9E41 | `LynWiiRetail.sel` present | Pending | Pending | Pending |
 
 All five DLC WADs contain USA title metadata for Just Dance 2, 3, 4, 2014 and 2015. Offline availability and gameplay remain pending.
-
-
-## Tile artwork
-
-Most tiles use a still from the locally cached coach video. Two tiles use original covers made with ImageGen for this launcher.
-
-- [Just Dance](assets/JustDance.jpg) was generated as an original editorial dance photograph of a bob-haired dancer in an acid-lime jacket on a violet soundstage with hot-pink and lavender beams. The prompt called for a landscape crop, a clear dancing silhouette, and an edge-to-edge image without text, logos, famous people, or game characters.
-- [Get Lucky](assets/GetLucky.jpg) was generated as an original editorial dance photograph of a dancer wearing a metallic copper bomber under warm amber disco lighting. The prompt called for a landscape crop, a clear funk pose, 1970s disco energy, and an edge-to-edge image without text, logos, famous people, helmets, or game characters.

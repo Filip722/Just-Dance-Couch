@@ -6,9 +6,6 @@
 #include FT_FREETYPE_H
 #include <limits.h>
 
-extern const unsigned char _binary_JustDance_bmp_start[], _binary_JustDance_bmp_end[];
-extern const unsigned char _binary_GetLucky_bmp_start[], _binary_GetLucky_bmp_end[];
-
 enum {
   WIDTH = 1440, HEIGHT = 810, FONT_COUNT = 3,
   FIRST_GLYPH = 32, GLYPH_COUNT = 224, ATLAS_COLUMNS = 16,
@@ -111,16 +108,6 @@ static void load_fonts(SongGrid *grid) {
   FT_Done_FreeType(freetype);
 }
 
-static SDL_Texture *cover(SDL_Renderer *renderer, const unsigned char *start, const unsigned char *end) {
-  SDL_IOStream *data = SDL_IOFromConstMem(start, (size_t)(end - start));
-  if (!data) return NULL;
-  SDL_Surface *pixels = SDL_LoadBMP_IO(data, true);
-  if (!pixels) return NULL;
-  SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, pixels);
-  SDL_DestroySurface(pixels);
-  return texture;
-}
-
 static int preview_path(char *path, const SongGrid *grid, const Edition *edition, const Song *song,
                         const char *extension) {
   if (!grid->cache[0] || !song->map) return 0;
@@ -168,11 +155,9 @@ SongGrid *song_grid_create(SDL_Renderer *renderer) {
       song_grid_destroy(grid);
       return NULL;
     }
-    for (int i = edition == 0 ? COVER_COUNT : 0; i < page->count; i++)
+    for (int i = 0; i < page->count; i++)
       grid->covers[edition][i] = coach_thumbnail(grid, page, &page->songs[i]);
   }
-  grid->covers[0][0] = cover(renderer, _binary_JustDance_bmp_start, _binary_JustDance_bmp_end);
-  grid->covers[0][1] = cover(renderer, _binary_GetLucky_bmp_start, _binary_GetLucky_bmp_end);
   SDL_SetRenderLogicalPresentation(renderer, WIDTH, HEIGHT, SDL_LOGICAL_PRESENTATION_LETTERBOX);
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
   return grid;
@@ -314,14 +299,6 @@ static void background(SDL_Renderer *renderer) {
     SDL_RenderLine(renderer, 1070 + i * 45, 0, 1440, 255 + i * 42);
 }
 
-static void draw_cover(SDL_Renderer *renderer, SDL_Texture *texture, SDL_FRect box) {
-  float width, height;
-  if (!texture || !SDL_GetTextureSize(texture, &width, &height)) return;
-  float crop_height = width * box.h / box.w;
-  SDL_FRect pixels = {0, (height - crop_height) * 0.15f, width, crop_height};
-  SDL_RenderTexture(renderer, texture, &pixels, &box);
-}
-
 void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
                      int loading, const char *status, int keyboard) {
   SDL_Renderer *renderer = grid->renderer;
@@ -352,12 +329,10 @@ void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
     const Song *song = &page->songs[entry];
     SDL_Texture *thumbnail = grid->covers[edition][entry];
     int video = grid->video && grid->preview == song;
-    if (video || (thumbnail && !(edition == 0 && entry < COVER_COUNT))) {
+    if (video || thumbnail) {
       float width = 115.0f * PREVIEW_WIDTH / PREVIEW_HEIGHT;
       SDL_FRect screen = {slot.x + (slot.w - width) / 2, slot.y, width, 115};
       SDL_RenderTexture(renderer, video ? grid->video : thumbnail, NULL, &screen);
-    } else if (thumbnail) {
-      draw_cover(renderer, thumbnail, (SDL_FRect){slot.x, slot.y, slot.w, 115});
     }
     float title_line = slot.y + (thumbnail || video ? 141 : 83);
     text_fit(grid, TILE, song->title, slot.x + 13, title_line, slot.w - 26, white);

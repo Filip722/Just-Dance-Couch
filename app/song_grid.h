@@ -2,7 +2,7 @@
 
 #include <SDL3/SDL.h>
 
-enum { COVER_COUNT = 2, EDITION_COUNT = 2, GRID_COLUMNS = 5, GRID_ROWS = 3 };
+enum { EDITION_COUNT = 2, GRID_COLUMNS = 5, GRID_ROWS = 3 };
 
 typedef struct {
   const char *title, *artist, *map;

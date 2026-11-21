@@ -269,20 +269,6 @@ def build_couch(jobs):
             )
             title_objects.append(str(combined))
 
-        covers = staging / "covers.o"
-        cover_files = []
-        for map_name in ("JustDance", "GetLucky"):
-            bmp = f"{map_name}.bmp"
-            subprocess.run(
-                ["ffmpeg", "-v", "error", "-i", str(ROOT / f"assets/{map_name}.jpg"),
-                 "-pix_fmt", "bgr24", bmp], cwd=staging, env=env, check=True,
-            )
-            cover_files.append(bmp)
-        subprocess.run(["ld", "-r", "-b", "binary", "-o", str(covers), *cover_files],
-                       cwd=staging, env=env, check=True)
-        subprocess.run(["objcopy", "--rename-section", ".data=.rodata,alloc,load,readonly,data,contents",
-                        str(covers)], env=env, check=True)
-
         main_object = staging / "runtime_main.o"
         original_main = subprocess.check_output(
             ["ninja", "-t", "commands", "obj/runtime_main.o"], cwd=console, env=env, text=True,
@@ -303,7 +289,7 @@ def build_couch(jobs):
             [clang, "-O2", *includes, *bluetooth_includes, str(ROOT / "app/couch.c"),
              str(ROOT / "app/worker.c"), str(ROOT / "app/usb_remote.c"), str(ROOT / "app/song_grid.c"),
              str(ROOT / "app/catalog.c"),
-             str(main_object), str(covers), *runtime_objects, *title_objects, "-o", str(result),
+             str(main_object), *runtime_objects, *title_objects, "-o", str(result),
              "-Wl,-z,noexecstack", *bluetooth_flags, *font_flags, *link_flags],
             cwd=console, env=env, check=True,
         )
