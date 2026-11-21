@@ -97,7 +97,11 @@ static const Song songs_2015[] = {
   {"You're On My Mind", "Imposs Ft. J. Perry", "OnMyMind"},
 };
 
-const Edition editions[EDITION_COUNT] = {
+#include "collection_catalog.h"
+
+const Edition editions[] = {
   {"Just Dance 2014", "SJOE41", songs, sizeof songs / sizeof songs[0]},
   {"Just Dance 2015", "SE3E41", songs_2015, sizeof songs_2015 / sizeof songs_2015[0]},
+  COLLECTION_EDITIONS
 };
+const int edition_count = sizeof editions / sizeof editions[0];

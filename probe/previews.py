@@ -18,8 +18,10 @@ PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_FPS = 160, 120, 10
 FRAME_BYTES = PREVIEW_WIDTH * PREVIEW_HEIGHT * 3
 
 
-def archive_entries(folder, reverse):
-    for archive in sorted(folder.glob("Bundle_*.ipk")):
+def archive_entries(folder):
+    for archive in sorted(folder.glob("*.ipk")):
+        if not archive.name.lower().startswith("bundle"):
+            continue
         with archive.open("rb") as source:
             magic, version, _, base, count = struct.unpack(">5I", source.read(20))
             if (magic, version) != (0x50EC12BA, 5):
@@ -32,7 +34,7 @@ def archive_entries(folder, reverse):
                 length, = struct.unpack(">I", source.read(4))
                 second = source.read(length)
                 source.read(8)
-                directory, name = (second, first) if reverse else (first, second)
+                directory, name = (first, second) if first.endswith(b"/") else (second, first)
                 if not packed and base + offset + size <= limit and size:
                     yield directory.lower(), name.lower(), (archive, base + offset, size)
 
@@ -134,25 +136,35 @@ def render_preview(job, destination):
         print(f"preview: {key}: {error}", flush=True)
 
 
-def prepare_previews(disc: Path, destination: Path, jobs=6):
-    destination.mkdir(parents=True, exist_ok=True)
+def song_assets(disc):
     collections = {}
-    for directory, name, entry in archive_entries(disc / "files", disc.name == "SE3E41"):
+    for directory, name, entry in archive_entries(disc / "files"):
+        if name == b"songdesc.main_legacy.tpl.ckd" and b"/legacyconverteddata/" in directory:
+            key = directory.rstrip(b"/").rsplit(b"/", 1)[-1]
+            collections.setdefault(key, {})["descriptor"] = entry
         if directory.endswith(b"/audio/"):
             key = directory.rstrip(b"/").rsplit(b"/", 2)[-2]
             if name == key + b".wav.ckd":
                 collections.setdefault(key, {})["audio"] = entry
-            elif name == key + b"_musictrack.tpl.ckd":
+            elif name in (key + b"_musictrack.tpl.ckd", key + b"_musictrack.main_legacy.tpl.ckd"):
                 collections.setdefault(key, {})["track"] = entry
         elif directory.endswith(b"/videoscoach/"):
             key = directory.rstrip(b"/").rsplit(b"/", 2)[-2]
             if name == key + b".wii.webm":
                 collections.setdefault(key, {})["video"] = entry
+    return collections
+
+
+def prepare_previews(disc: Path, destination: Path, jobs=6, songs=None):
+    destination.mkdir(parents=True, exist_ok=True)
+    collections = song_assets(disc)
     pending = []
     for key, entries in collections.items():
         if "audio" not in entries or "track" not in entries:
             continue
         key = key.decode("ascii")
+        if songs is not None and key not in songs:
+            continue
         if (destination / f"{key}.wav").is_file() and (
             "video" not in entries or (destination / f"{key}.rgb").is_file()
         ):

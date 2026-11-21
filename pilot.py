@@ -14,7 +14,8 @@ import tarfile
 import tempfile
 from urllib.request import urlretrieve
 
-from probe.instrument import fix_jd3_stream_wait, instrument
+from probe.collection import EDITIONS, catalog, write_catalog
+from probe.instrument import fix_jd2_bigfile, fix_jd3_stream_wait, instrument
 from probe.previews import prepare_previews
 
 
@@ -24,12 +25,28 @@ ARCHIVE_SHA256 = "12ef40254eb5460767a936be7d35b6b5f831f39b64401e7428c8a8a05b9bb7
 BTSTACK_VERSION = "1.8.3"
 BTSTACK_SHA256 = "aa164c64ce3bacc73e214562beb6b2b1e675ccb8f5d6d6764983aa58ddff311a"
 DISCS = {
+    "SD2Y41": ("Just Dance 2.rvz", 0, "ac002beb4985e7ba7f75708b558e0a78480def4a2b4e2e0152c5d3340de57520"),
     "SJOE41": ("Just Dance 2014.rvz", 0, "4d60b98e73de8052c20d52df026a99994186aa0c618072423e3f1007a42e8d3d"),
-    "SJDE41": ("Just Dance 3.rvz", 1, "18c218dd67a4c1d8f05ad40a380bc1822c3ab4a4ff7d04a24d043f933997acf7"),
     "SE3E41": ("Just Dance 2015.rvz", 0, "3780fa7d05f45cf7a90d95ac7368a9c4276168d8c339a3418d8ff06e8c60dfae"),
+    "SJNE41": ("Just Dance 2016.rvz", 0, "63d052ce99b41944e397ee518e3b33e8e16965b320e3d801a8e7a0022cdab264"),
     "SZ7E41": ("Just Dance 2017.rvz", 0, "fa7e5cda4da2a1ddafcc71f32bfaa1a4acca311dcafde939b247b49bb9896d16"),
+    "SE8E41": ("Just Dance 2018.rvz", 0, "fefc8746c08f91f3e19a7fefca4e482b69e11bd88f06b1bdacfa7a209ee5d312"),
+    "S5EE41": ("Just Dance 2019.rvz", 0, "0c30ff85d33c38fa933bdd3ff1af7de01d97b43ded7a36610cadb2c8e009ec84"),
+    "SJDE41": ("Just Dance 3.rvz", 1, "18c218dd67a4c1d8f05ad40a380bc1822c3ab4a4ff7d04a24d043f933997acf7"),
+    "SJXE41": ("Just Dance 4.rvz", 0, "2b55c4e869e15d89f705fcc76912ea800f73167fbe49437c0e9e1f9756ffc0da"),
+    "S5DE41": ("Just Dance Disney Party 2.rvz", 0, "6ec3d07053bd2951e4f77dd27e46de366e45b3c9d5204b4dd7eba347fc3de162"),
+    "SJ6E41": ("Just Dance Disney Party.rvz", 0, "5c67b9d8a0fa7b61225861b8bf823ae43b5cb10900166579b7d879eb8d1ff0b1"),
+    "SJHE41": ("Just Dance Greatest Hits.rvz", 0, "d74f6d36712807084c8b71033850bde4a7778ef8662722deec5309a0050fbd87"),
+    "SJZE41": ("Just Dance Kids 2.rvz", 0, "35f046d2f911fd8512c9099e3204caeaee3ef628d40ff5418405cb31b50f0411"),
+    "SJ7E41": ("Just Dance Kids 2014.rvz", 0, "d7a4e53c8ba8a40c911704377d5399ab59b907f459b0fdece0a45c574b69fa75"),
+    "SDZE41": ("Just Dance Kids.rvz", 0, "456e5cfe987b212a3215cc6abe90b6982c841839da2272155efdc73ee5fb9619"),
+    "SJ9E41": ("Just Dance Summer Party.rvz", 0, "e6728082fd351ac90503cfec6684b4515ef0bf5ae9a766060de59fe2d59b0ee0"),
+    "SDNE41": ("Just Dance.rvz", 0, "6938c96e3511568eec2c2abaaa26b64cbd47a852b51dbf20929da053a2c8beb1"),
 }
-EMBEDDED_TITLES = {"SJOE41": "jd2014_title", "SE3E41": "jd2015_title", "SJDE41": "jd3_title"}
+EMBEDDED_TITLES = {
+    "SJOE41": "jd2014_title", "SE3E41": "jd2015_title", "SJDE41": "jd3_title",
+    **{disc: f"title_{disc}" for disc in EDITIONS},
+}
 BACKUPS = Path("/mnt/synology/Games/wii")
 
 
@@ -159,7 +176,7 @@ def build(disc_id, image, jobs):
     env = build_environment()
     disc = CACHE / "discs" / disc_id
     prepare_disc(disc, disc_id, image, env)
-    if disc_id in ("SJOE41", "SE3E41"):
+    if disc_id in ("SJOE41", "SE3E41") or disc_id in EDITIONS:
         adapter = RUNTIME / "runtime/jd2014_probe.c"
         adapter_source = (ROOT / "probe/jd2014.c").read_bytes()
         if not adapter.exists() or adapter.read_bytes() != adapter_source:
@@ -169,12 +186,14 @@ def build(disc_id, image, jobs):
          "--no-pack", "--jobs", str(jobs), "--fifo-breakpoints"],
         cwd=UPSTREAM, env=env, check=True,
     )
-    if disc_id in EMBEDDED_TITLES:
+    if disc_id in EMBEDDED_TITLES or disc_id == "SD2Y41":
         title_build = RUNTIME / f"build-{disc_id}"
-        if disc_id in ("SJOE41", "SE3E41"):
+        if disc_id in ("SJOE41", "SE3E41") or disc_id in EDITIONS:
             instrument(title_build / "generated", disc_id)
-        else:
+        elif disc_id == "SJDE41":
             fix_jd3_stream_wait(title_build / "generated")
+        elif (disc / "files/WD2.bbf").is_file() and not (disc / "files/WD2.bf").is_file():
+            fix_jd2_bigfile(title_build / "generated")
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
 
 
@@ -226,22 +245,25 @@ def build_couch(jobs):
     for disc_id in EMBEDDED_TITLES:
         if not (RUNTIME / f"build-{disc_id}/title.so").is_file():
             raise ValueError(f"Run python3 pilot.py build --disc {disc_id} first")
-    jd2014 = CACHE / "discs/SJOE41"
-    verify_disc(jd2014, "SJOE41")
-    prepare_previews(jd2014, CACHE / "previews/SJOE41", jobs)
-    jd2015 = CACHE / "discs/SE3E41"
-    verify_disc(jd2015, "SE3E41")
-    prepare_previews(jd2015, CACHE / "previews/SE3E41", jobs)
-    jd2014_build = RUNTIME / "build-SJOE41"
-    instrument(jd2014_build / "generated")
-    subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=jd2014_build, env=env, check=True)
-    jd2015_build = RUNTIME / "build-SE3E41"
-    instrument(jd2015_build / "generated", "SE3E41")
-    subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=jd2015_build, env=env, check=True)
-    jd3 = RUNTIME / "build-SJDE41"
-    verify_disc(CACHE / "discs/SJDE41", "SJDE41")
-    fix_jd3_stream_wait(jd3 / "generated")
-    subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=jd3, env=env, check=True)
+    collection = {}
+    for disc_id in EMBEDDED_TITLES:
+        disc = CACHE / "discs" / disc_id
+        verify_disc(disc, disc_id)
+        title_build = RUNTIME / f"build-{disc_id}"
+        if disc_id == "SJDE41":
+            fix_jd3_stream_wait(title_build / "generated")
+        else:
+            if disc_id in EDITIONS:
+                collection[disc_id] = songs = catalog(disc)
+                if not songs:
+                    raise ValueError(f"No local Classic routines for {disc_id}")
+                keys = {key.lower() for _, _, key in songs}
+            else:
+                keys = None
+            prepare_previews(disc, CACHE / "previews" / disc_id, jobs, keys)
+            instrument(title_build / "generated", disc_id)
+        subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
+
     adapter_source = (ROOT / "probe/jd2014.c").read_bytes()
     if not adapter.exists() or adapter.read_bytes() != adapter_source:
         adapter.write_bytes(adapter_source)
@@ -257,6 +279,14 @@ def build_couch(jobs):
     output_folder.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=CACHE) as temp:
         staging = Path(temp)
+        write_catalog(staging, collection)
+        registry = staging / "collection_titles.c"
+        declarations = "\n".join(f"extern const Title {symbol};" for symbol in EMBEDDED_TITLES.values())
+        lookups = "\n".join(f'  if (!strcmp(path, "builtin:{disc}")) return &{symbol};'
+                             for disc, symbol in EMBEDDED_TITLES.items())
+        registry.write_text('#include <string.h>\n#include "title.h"\n' + declarations
+                            + "\nconst Title *jd_builtin_title(const char *path) {\n"
+                            + lookups + "\n  return NULL;\n}\n")
         title_objects = []
         for disc_id, symbol in EMBEDDED_TITLES.items():
             folder = RUNTIME / f"build-{disc_id}"
@@ -282,13 +312,13 @@ def build_couch(jobs):
         )
         runtime_objects.remove("obj/runtime_main.o")
         result = staging / "just-dance-couch"
-        includes = ["-I../runtime", f"-I{ROOT / 'app'}"]
+        includes = ["-I../runtime", f"-I{ROOT / 'app'}", f"-I{staging}"]
         if "SDL3_PREFIX" in env:
             includes.append(f"-I{env['SDL3_PREFIX']}/include")
         subprocess.run(
             [clang, "-O2", *includes, *bluetooth_includes, str(ROOT / "app/couch.c"),
              str(ROOT / "app/worker.c"), str(ROOT / "app/usb_remote.c"), str(ROOT / "app/song_grid.c"),
-             str(ROOT / "app/catalog.c"),
+             str(ROOT / "app/catalog.c"), str(registry),
              str(main_object), *runtime_objects, *title_objects, "-o", str(result),
              "-Wl,-z,noexecstack", *bluetooth_flags, *font_flags, *link_flags],
             cwd=console, env=env, check=True,

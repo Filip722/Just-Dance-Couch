@@ -15,17 +15,8 @@
 #include "remote_link.h"
 #include "session.h"
 #include "song_grid.h"
-#include "title.h"
 
-extern const Title jd2014_title, jd2015_title, jd3_title;
 int jd_runtime_main(int count, char **arguments);
-
-const Title *jd_builtin_title(const char *path) {
-  if (!strcmp(path, "builtin:SJOE41")) return &jd2014_title;
-  if (!strcmp(path, "builtin:SE3E41")) return &jd2015_title;
-  if (!strcmp(path, "builtin:SJDE41")) return &jd3_title;
-  return NULL;
-}
 
 int session_send(int socket, enum SessionMessageType type, const void *data, unsigned size) {
   SessionMessage message = {.type = type, .size = size};
@@ -167,7 +158,7 @@ static int check_header(const char *root, const char *disc, const char *relative
 
 int run_worker(char *program, const char *disc, const char *map, int socket, int simulated) {
   char cache[PATH_MAX], state[PATH_MAX], sys[PATH_MAX], saves[PATH_MAX], builtin[24];
-  for (int i = 0; i < EDITION_COUNT; i++)
+  for (int i = 0; i < edition_count; i++)
     if (!strcmp(disc, editions[i].disc)) edition = &editions[i];
   if (!edition && strcmp(disc, "SJDE41")) return 10;
   if (!root_path(cache, sizeof cache, "XDG_CACHE_HOME", ".cache") ||

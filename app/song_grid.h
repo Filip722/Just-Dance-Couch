@@ -2,7 +2,7 @@
 
 #include <SDL3/SDL.h>
 
-enum { EDITION_COUNT = 2, GRID_COLUMNS = 5, GRID_ROWS = 3 };
+enum { GRID_COLUMNS = 5, GRID_ROWS = 3 };
 
 typedef struct {
   const char *title, *artist, *map;
@@ -15,7 +15,8 @@ typedef struct {
 } Edition;
 
 extern const Song songs[];
-extern const Edition editions[EDITION_COUNT];
+extern const Edition editions[];
+extern const int edition_count;
 typedef struct SongGrid SongGrid;
 
 SongGrid *song_grid_create(SDL_Renderer *renderer);

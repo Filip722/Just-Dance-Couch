@@ -192,7 +192,7 @@ static void pressed(Browser *browser, uint16_t buttons) {
     }
   } else if (buttons & BUTTON_RIGHT) {
     if (column + 1 < GRID_COLUMNS && previous + 1 < count) browser->row++;
-    else if (browser->edition + 1 < EDITION_COUNT) {
+    else if (browser->edition + 1 < edition_count) {
       browser->edition++;
       browser->row = browser->first_row = 0;
     }

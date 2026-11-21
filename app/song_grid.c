@@ -36,7 +36,6 @@ typedef struct {
 
 struct SongGrid {
   SDL_Renderer *renderer;
-  SDL_Texture **covers[EDITION_COUNT];
   Font fonts[FONT_COUNT];
   Preview audio_preview;
   SDL_AudioStream *audio;
@@ -46,6 +45,7 @@ struct SongGrid {
   const Song *preview;
   uint64_t preview_at, preview_started;
   char cache[PATH_MAX];
+  SDL_Texture **covers[];
 };
 
 static const SDL_Color white = {248, 247, 255, 255};
@@ -146,13 +146,13 @@ static SDL_Texture *coach_thumbnail(SongGrid *grid, const Edition *edition, cons
 }
 
 SongGrid *song_grid_create(SDL_Renderer *renderer) {
-  SongGrid *grid = calloc(1, sizeof *grid);
+  SongGrid *grid = calloc(1, sizeof *grid + edition_count * sizeof *grid->covers);
   if (!grid) return NULL;
   grid->renderer = renderer;
   load_fonts(grid);
   SDL_InitSubSystem(SDL_INIT_AUDIO);
   if (!root_path(grid->cache, sizeof grid->cache, "XDG_CACHE_HOME", ".cache")) grid->cache[0] = 0;
-  for (int edition = 0; edition < EDITION_COUNT; edition++) {
+  for (int edition = 0; edition < edition_count; edition++) {
     const Edition *page = &editions[edition];
     grid->covers[edition] = calloc(page->count, sizeof *grid->covers[edition]);
     if (!grid->covers[edition]) {
@@ -182,7 +182,7 @@ static void stop_preview(SongGrid *grid) {
 
 void song_grid_destroy(SongGrid *grid) {
   stop_preview(grid);
-  for (int edition = 0; edition < EDITION_COUNT; edition++) {
+  for (int edition = 0; edition < edition_count; edition++) {
     if (!grid->covers[edition]) continue;
     for (int i = 0; i < editions[edition].count; i++) SDL_DestroyTexture(grid->covers[edition][i]);
     free(grid->covers[edition]);
@@ -308,7 +308,7 @@ void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
   SDL_Renderer *renderer = grid->renderer;
   const Edition *page = &editions[edition];
   const Song *choice = &page->songs[selected];
-  SDL_Color highlight = accent[edition];
+  SDL_Color highlight = accent[edition % (sizeof accent / sizeof accent[0])];
   background(renderer);
   rectangle(renderer, (SDL_FRect){GRID_LEFT, 17, 5, 30}, highlight);
   text(grid, HEADING, page->title, GRID_LEFT + 16, HEADER_BASELINE, white);
@@ -321,9 +321,9 @@ void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
     float position = (SDL_GetTicks() % 1440) / 1440.0f;
     rectangle(renderer, (SDL_FRect){GRID_LEFT + (GRID_WIDTH - 140) * position, GRID_TOP - 10, 140, 3}, highlight);
   } else {
-    if (status) text_fit(grid, DETAIL, status, 370, HEADER_BASELINE, 690, muted);
-    const char *neighbor = edition > 0 ? "< Left at row start for 2014" : "Right at row end for 2015 >";
-    text(grid, DETAIL, neighbor, 1136, HEADER_BASELINE, muted);
+    if (status) text_fit(grid, DETAIL, status, 370, HEADER_BASELINE, 570, muted);
+    if (edition > 0) text(grid, DETAIL, "< Left at row start", 985, HEADER_BASELINE, muted);
+    if (edition + 1 < edition_count) text(grid, DETAIL, "Right at row end >", 1210, HEADER_BASELINE, muted);
   }
   for (int i = 0; i < GRID_COLUMNS * GRID_ROWS; i++) {
     int column = i % GRID_COLUMNS, row = i / GRID_COLUMNS;
