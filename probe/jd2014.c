@@ -219,7 +219,7 @@ typedef struct {
   unsigned lobby_timer_offset;
   uint32_t direct_caller, database_ready, get_song, make_string, destroy_string;
   uint32_t set_mode, set_song, stop_lobby_timer, start_lobby;
-  uint32_t splash_end, boot_wait_callers[4];
+  uint32_t lobby_howto_caller, splash_end, boot_wait_callers[4];
 } UbiArtPort;
 
 static const UbiArtPort ubiart_ports[] = {
@@ -227,27 +227,27 @@ static const UbiArtPort ubiart_ports[] = {
   {0x53453345, 0x6838caf6eb441eebull, 22160, 176, 412, 8, 22344,
    0x8023ae90, 0x80253160, 0x80254b2c, 0x800178ec, 0x8001784c,
    0x8022d39c, 0x8022d130, 0x80213560, 0x80126090,
-   0x8007b1f4, {0x80183bc0, 0x80183f7c, 0x801843e0}},
+   0, 0x8007b1f4, {0x80183bc0, 0x80183f7c, 0x801843e0}},
   // Just Dance 2016 (SJNE41)
   {0x534a4e45, 0x982a35fc4bc22d63ull, 20664, 152, 0, 7, 20840,
    0x80550994, 0x8056bd04, 0x8056d6d0, 0x8000a448, 0x8000a3a8,
    0x80546a04, 0x80546798, 0x80536950, 0x80447668,
-   0x80630684, {0x8049dbcc, 0x8049df7c, 0x8049e2c8, 0x8049e72c}},
+   0x80519960, 0x80630684, {0x8049dbcc, 0x8049df7c, 0x8049e2c8, 0x8049e72c}},
   // Just Dance 2017 (SZ7E41)
   {0x535a3745, 0x2a329d91781d87a0ull, 20640, 152, 0, 7, 20816,
    0x80551d34, 0x8056d4c8, 0x8056ee94, 0x8000a448, 0x8000a3a8,
    0x80547da4, 0x80547b38, 0x80537c58, 0x804481b0,
-   0x80632bdc, {0x8049eb8c, 0x8049ef3c, 0x8049f288, 0x8049f6ec}},
+   0x8051adc0, 0x80632bdc, {0x8049eb8c, 0x8049ef3c, 0x8049f288, 0x8049f6ec}},
   // Just Dance 2018 (SE8E41)
   {0x53453845, 0xe8cdcc699a88d248ull, 20656, 152, 0, 7, 20832,
    0x80550c88, 0x8056cac4, 0x8056e490, 0x8000a4e8, 0x8000a448,
    0x80546cec, 0x80546a80, 0x80536a14, 0x804489d0,
-   0x80630c3c, {0x8049debc, 0x8049e278, 0x8049e6dc}},
+   0x80519ba4, 0x80630c3c, {0x8049debc, 0x8049e278, 0x8049e6dc}},
   // Just Dance 2019 (S5EE41)
   {0x53354545, 0x351e518638c91d83ull, 21480, 152, 0, 7, 21656,
    0x80541458, 0x8055cfbc, 0x8055e988, 0x8000a290, 0x8000a1f0,
    0x80536848, 0x805365dc, 0x805268cc, 0x8043e834,
-   0x80614304, {0x80492dec, 0x804931a8, 0x8049360c}},
+   0x80509a7c, 0x80614304, {0x80492dec, 0x804931a8, 0x8049360c}},
 };
 static const UbiArtPort *active_port;
 
@@ -371,4 +371,10 @@ int jd2015_probe_controller_prompt(void) {
   // The hidden Wii Remote grip reminder normally waits for the same A press
   // the user has already used to choose this song in the launcher.
   return selected_entry && !map_seen && active_port && jd_couch_loading && jd_couch_loading();
+}
+
+int jd2015_probe_skip_lobby_howto(void) {
+  // The launcher's A press confirms the grip reminder. Tell the lobby entry
+  // state that no popup opened, so it can finish its normal setup immediately.
+  return jd2015_probe_controller_prompt() && cpu.lr == active_port->lobby_howto_caller;
 }

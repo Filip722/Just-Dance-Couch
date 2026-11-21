@@ -54,11 +54,23 @@ UBIART_ADDRESSES = {
 }
 UBIART_HOOK_KEYS = "8023af10 80189828 80261ce0 80125af0 80124238 801e2fe0 80194f48 8022fdec 801346fc 8007b294 80183ce0 801fb314"
 
+# JD_GameManager::displayHowTo, called by the lobby entry state.
+UBIART_DISPLAY_HOWTO = {
+    "SJNE41": "80547488",
+    "SZ7E41": "80548844",
+    "SE8E41": "80547760",
+    "S5EE41": "80537268",
+}
+
 
 def instrument(directory, disc="SJOE41"):
     if disc in UBIART_ADDRESSES:
         pending = dict(zip(UBIART_ADDRESSES[disc].split(),
                            (JD2015_HOOKS[key] for key in UBIART_HOOK_KEYS.split()), strict=True))
+        pending[UBIART_DISPLAY_HOWTO[disc]] = (
+            "extern int jd2015_probe_skip_lobby_howto(void); "
+            "if (jd2015_probe_skip_lobby_howto()) { cpu.r[3] = 0; return; }"
+        )
     else:
         pending = (JD2015_HOOKS if disc == "SE3E41" else HOOKS).copy()
     for source in directory.glob("*.c"):
