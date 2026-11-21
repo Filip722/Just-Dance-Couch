@@ -8,11 +8,15 @@
 
 enum {
   WIDTH = 1440, HEIGHT = 810, FONT_COUNT = 3,
+  GRID_LEFT = 28, GRID_TOP = 66, HEADER_BASELINE = 42,
+  TILE_WIDTH = 266, TILE_HEIGHT = 232, TILE_GAP = 12, TILE_MEDIA_HEIGHT = 180,
+  GRID_WIDTH = GRID_COLUMNS * TILE_WIDTH + (GRID_COLUMNS - 1) * TILE_GAP,
+  GRID_HEIGHT = GRID_ROWS * TILE_HEIGHT + (GRID_ROWS - 1) * TILE_GAP,
   FIRST_GLYPH = 32, GLYPH_COUNT = 224, ATLAS_COLUMNS = 16,
   PREVIEW_WIDTH = 160, PREVIEW_HEIGHT = 120, PREVIEW_FRAME_MS = 100,
   PREVIEW_PITCH = PREVIEW_WIDTH * 3, PREVIEW_FRAME_BYTES = PREVIEW_PITCH * PREVIEW_HEIGHT,
 };
-enum GridFont { FOOTER, TILE, HEADING };
+enum GridFont { DETAIL, TILE, HEADING };
 
 typedef struct {
   SDL_FRect bounds;
@@ -83,10 +87,10 @@ static void load_fonts(SongGrid *grid) {
   FcConfig *config = FcInitLoadConfigAndFonts();
   if (config) {
     for (int i = 0; i < FONT_COUNT; i++) {
-      static const int size[] = {19, 24, 60};
+      static const int size[] = {19, 24, 33};
       FcPattern *pattern = FcPatternBuild(NULL, FC_FAMILY, FcTypeString, "sans-serif",
                                          FC_WEIGHT, FcTypeInteger,
-                                         i == FOOTER ? FC_WEIGHT_REGULAR : FC_WEIGHT_BOLD, NULL);
+                                         i == DETAIL ? FC_WEIGHT_REGULAR : FC_WEIGHT_BOLD, NULL);
       if (!pattern) continue;
       FcConfigSubstitute(config, pattern, FcMatchPattern);
       FcDefaultSubstitute(pattern);
@@ -306,17 +310,25 @@ void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
   const Song *choice = &page->songs[selected];
   SDL_Color highlight = accent[edition];
   background(renderer);
-  rectangle(renderer, (SDL_FRect){68, 60, 8, 50}, highlight);
-  text(grid, HEADING, page->title, 96, 108, white);
+  rectangle(renderer, (SDL_FRect){GRID_LEFT, 17, 5, 30}, highlight);
+  text(grid, HEADING, page->title, GRID_LEFT + 16, HEADER_BASELINE, white);
 
-  if (!loading) {
-    const char *neighbor = edition > 0 ? "< Just Dance 2014" : "Just Dance 2015 >";
-    const char *direction = edition > 0 ? "Left at row start" : "Right at row end";
-    text(grid, TILE, neighbor, 1120, 76, white);
-    text(grid, FOOTER, direction, 1120, 103, muted);
+  if (loading) {
+    char label[72];
+    snprintf(label, sizeof label, "Starting %s", choice->title);
+    text_fit(grid, TILE, status ? status : label, 370, HEADER_BASELINE, 790, white);
+    text(grid, DETAIL, keyboard ? "Esc  Cancel" : "HOME  Cancel", 1262, HEADER_BASELINE, muted);
+    float position = (SDL_GetTicks() % 1440) / 1440.0f;
+    rectangle(renderer, (SDL_FRect){GRID_LEFT + (GRID_WIDTH - 140) * position, GRID_TOP - 10, 140, 3}, highlight);
+  } else {
+    if (status) text_fit(grid, DETAIL, status, 370, HEADER_BASELINE, 690, muted);
+    const char *neighbor = edition > 0 ? "< Left at row start for 2014" : "Right at row end for 2015 >";
+    text(grid, DETAIL, neighbor, 1136, HEADER_BASELINE, muted);
   }
   for (int i = 0; i < GRID_COLUMNS * GRID_ROWS; i++) {
-    SDL_FRect slot = {68 + (i % GRID_COLUMNS) * 264, 156 + (i / GRID_COLUMNS) * 190, 244, 174};
+    int column = i % GRID_COLUMNS, row = i / GRID_COLUMNS;
+    SDL_FRect slot = {GRID_LEFT + column * (TILE_WIDTH + TILE_GAP), GRID_TOP + row * (TILE_HEIGHT + TILE_GAP),
+                      TILE_WIDTH, TILE_HEIGHT};
     int entry = first_row * GRID_COLUMNS + i;
     if (entry == selected)
       rectangle(renderer, (SDL_FRect){slot.x - 4, slot.y - 4, slot.w + 8, slot.h + 8}, highlight);
@@ -330,36 +342,20 @@ void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
     SDL_Texture *thumbnail = grid->covers[edition][entry];
     int video = grid->video && grid->preview == song;
     if (video || thumbnail) {
-      float width = 115.0f * PREVIEW_WIDTH / PREVIEW_HEIGHT;
-      SDL_FRect screen = {slot.x + (slot.w - width) / 2, slot.y, width, 115};
+      float width = (float)TILE_MEDIA_HEIGHT * PREVIEW_WIDTH / PREVIEW_HEIGHT;
+      SDL_FRect screen = {slot.x + (slot.w - width) / 2, slot.y, width, TILE_MEDIA_HEIGHT};
       SDL_RenderTexture(renderer, video ? grid->video : thumbnail, NULL, &screen);
     }
-    float title_line = slot.y + (thumbnail || video ? 141 : 83);
+    float title_line = slot.y + (thumbnail || video ? TILE_MEDIA_HEIGHT + 22 : slot.h / 2);
     text_fit(grid, TILE, song->title, slot.x + 13, title_line, slot.w - 26, white);
-    text_fit(grid, FOOTER, song->artist, slot.x + 13, title_line + 24, slot.w - 26, muted);
+    text_fit(grid, DETAIL, song->artist, slot.x + 13, title_line + 22, slot.w - 26, muted);
   }
   int total_rows = (page->count + GRID_COLUMNS - 1) / GRID_COLUMNS;
   if (total_rows > GRID_ROWS) {
-    SDL_FRect track = {1387, 156, 4, 554};
+    SDL_FRect track = {GRID_LEFT + GRID_WIDTH + 14, GRID_TOP, 4, GRID_HEIGHT};
     float row_height = track.h / total_rows;
     rectangle(renderer, track, (SDL_Color){210, 156, 243, 56});
     rectangle(renderer, (SDL_FRect){track.x, track.y + row_height * first_row, track.w, row_height * GRID_ROWS}, highlight);
-  }
-  rectangle(renderer, (SDL_FRect){68, 741, 1300, 1}, (SDL_Color){210, 156, 243, 75});
-  if (loading) {
-    char label[72];
-    snprintf(label, sizeof label, "Starting %s", choice->title);
-    text(grid, TILE, status ? status : label, 68, 780, white);
-    text(grid, FOOTER, keyboard ? "Esc  Cancel" : "HOME  Cancel", 1208, 780, muted);
-    float position = (SDL_GetTicks() % 1440) / 1440.0f;
-    rectangle(renderer, (SDL_FRect){68 + 1160 * position, 739, 140, 4}, highlight);
-  } else {
-    text(grid, FOOTER, keyboard ? "Arrow keys  Browse" : "D-pad  Browse", 68, 780, white);
-    const char *action = choice->map ? (keyboard ? "Enter  Play" : "A  Play") : "Browse only";
-    text(grid, FOOTER, action, 310, 780, choice->map ? white : muted);
-    if (status) text(grid, FOOTER, status, 526, 780, muted);
-    else if (!choice->map) text(grid, FOOTER, choice->title, 526, 780, white);
-    if (grid->audio || grid->video) text(grid, FOOTER, "Preview playing", 1141, 780, muted);
   }
   SDL_RenderPresent(renderer);
 }
