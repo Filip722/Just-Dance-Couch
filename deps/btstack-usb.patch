@@ -1,0 +1,80 @@
+--- a/platform/libusb/hci_transport_h2_libusb.c
++++ b/platform/libusb/hci_transport_h2_libusb.c
+@@ -839,28 +839,12 @@
+     usb_path_len = libusb_get_port_numbers(device, usb_path, USB_MAX_PATH_LEN);
+ 
+     int r;
+-    int kernel_driver_detached = 0;
+-
+-    // Detach OS driver (not possible for OS X, FreeBSD, and Windows)
+-#if !defined(__APPLE__) && !defined(_WIN32) && !defined(__CYGWIN__) && !defined(__FreeBSD__)
+-    r = libusb_kernel_driver_active(aHandle, 0);
++    // The Nintendo adapter is borrowed for one session. Reattach btusb on release.
++    r = libusb_set_auto_detach_kernel_driver(aHandle, 1);
+     if (r < 0) {
+-        log_error("libusb_kernel_driver_active error %d", r);
+         libusb_close(aHandle);
+         return r;
+     }
+-
+-    if (r == 1) {
+-        r = libusb_detach_kernel_driver(aHandle, 0);
+-        if (r < 0) {
+-            log_error("libusb_detach_kernel_driver error %d", r);
+-            libusb_close(aHandle);
+-            return r;
+-        }
+-        kernel_driver_detached = 1;
+-    }
+-    log_info("libusb_detach_kernel_driver");
+-#endif
+ 
+     // Only set the configuration when not already active — BT dongles expose exactly one
+     // configuration and hosts auto-configure them. Re-issuing SET_CONFIGURATION on an
+@@ -881,9 +865,6 @@
+         r = libusb_set_configuration(aHandle, configuration);
+         if (r < 0) {
+             log_error("Error libusb_set_configuration: %d", r);
+-            if (kernel_driver_detached){
+-                libusb_attach_kernel_driver(aHandle, 0);
+-            }
+             libusb_close(aHandle);
+             return r;
+         }
+@@ -896,9 +877,6 @@
+     r = libusb_claim_interface(aHandle, 0);
+     if (r < 0) {
+         log_error("Error %d claiming interface 0", r);
+-        if (kernel_driver_detached){
+-            libusb_attach_kernel_driver(aHandle, 0);
+-        }
+         libusb_close(aHandle);
+         return r;
+     }
+@@ -933,6 +911,7 @@
+         log_error("libusb_get_device_descriptor failed!");
+         return NULL;
+     }
++    if (desc.idVendor != 0x057e || desc.idProduct != 0x0305) return NULL;
+     usb_vendor_id = desc.idVendor;
+     usb_product_id = desc.idProduct;
+ 
+@@ -947,18 +926,6 @@
+ 
+     log_info("libusb open %d, handle %p", r, dev_handle);
+ 
+-    // reset device (Not currently possible under FreeBSD 11.x/12.x due to usb framework)
+-    // macOS: skipped — no kernel driver owns the dongle there, and macOS 26 (Tahoe)
+-    // kernel-panics in the reset/re-enumeration path (Apple bug; libusb issue #1710).
+-    // Verified by fsync-logged ladder probe: panic reproduces inside libusb_reset_device, 3/3.
+-#if !defined(__FreeBSD__) && !defined(__APPLE__)
+-    r = libusb_reset_device(dev_handle);
+-    if (r < 0) {
+-        log_error("libusb_reset_device failed!");
+-        libusb_close(dev_handle);
+-        return NULL;
+-    }
+-#endif
+     return dev_handle;
+ }
+ 

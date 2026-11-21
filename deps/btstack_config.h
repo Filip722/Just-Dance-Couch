@@ -1,0 +1,10 @@
+#pragma once
+
+#define ENABLE_CLASSIC
+#define ENABLE_LOG_ERROR
+#define HAVE_ASSERT
+#define HAVE_MALLOC
+#define HAVE_POSIX_FILE_IO
+#define HAVE_POSIX_TIME
+#define HCI_ACL_PAYLOAD_SIZE 1021
+#define NVM_NUM_LINK_KEYS 1

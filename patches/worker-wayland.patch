@@ -1,0 +1,35 @@
+--- a/recomp/runtime/window.c
++++ b/recomp/runtime/window.c
+@@ -51,6 +51,9 @@
+ static int fullscreen, windowed_x, windowed_y, windowed_width, windowed_height;
+ 
+ static GLFWmonitor *monitor_of_window(void) {
++#ifdef GLFW_PLATFORM_WAYLAND
++  if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) return glfwGetPrimaryMonitor();
++#endif
+   int count = 0, x, y, width, height;
+   GLFWmonitor **monitors = glfwGetMonitors(&count);
+   glfwGetWindowPos(window, &x, &y);
+@@ -68,7 +71,10 @@
+ static void set_fullscreen(int on) {
+   if (on == fullscreen) return;
+   if (on) {
+-    glfwGetWindowPos(window, &windowed_x, &windowed_y);
++#ifdef GLFW_PLATFORM_WAYLAND
++    if (glfwGetPlatform() != GLFW_PLATFORM_WAYLAND)
++#endif
++      glfwGetWindowPos(window, &windowed_x, &windowed_y);
+     glfwGetWindowSize(window, &windowed_width, &windowed_height);
+     GLFWmonitor *monitor = monitor_of_window();
+     const GLFWvidmode *mode = monitor ? glfwGetVideoMode(monitor) : 0;
+@@ -174,6 +180,10 @@
+   glfwInitVulkanLoader(vkGetInstanceProcAddr);
+ #endif
+ #endif
++#if defined(__linux__) && defined(GLFW_WAYLAND_LIBDECOR)
++  if (jd_couch_loading && jd_couch_loading())
++    glfwInitHint(GLFW_WAYLAND_LIBDECOR, GLFW_WAYLAND_DISABLE_LIBDECOR);
++#endif
+   if (!glfwInit()) { fprintf(stderr, "stop: no window system\n"); exit(10); }
+   stay_awake();
+   gx_backend_choose();

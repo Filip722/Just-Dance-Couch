@@ -14,16 +14,22 @@ import tarfile
 import tempfile
 from urllib.request import urlretrieve
 
-from probe.instrument import instrument
+from probe.instrument import fix_jd3_stream_wait, instrument
+from probe.previews import prepare_previews
 
 
 ROOT = Path(__file__).resolve().parent
 REVISION = "55fb408eb1f2df75e914524dc092e69c70739ded"
 ARCHIVE_SHA256 = "12ef40254eb5460767a936be7d35b6b5f831f39b64401e7428c8a8a05b9bb7b2"
-PILOTS = {
+BTSTACK_VERSION = "1.8.3"
+BTSTACK_SHA256 = "aa164c64ce3bacc73e214562beb6b2b1e675ccb8f5d6d6764983aa58ddff311a"
+DISCS = {
     "SJOE41": ("Just Dance 2014.rvz", 0, "4d60b98e73de8052c20d52df026a99994186aa0c618072423e3f1007a42e8d3d"),
     "SJDE41": ("Just Dance 3.rvz", 1, "18c218dd67a4c1d8f05ad40a380bc1822c3ab4a4ff7d04a24d043f933997acf7"),
+    "SE3E41": ("Just Dance 2015.rvz", 0, "3780fa7d05f45cf7a90d95ac7368a9c4276168d8c339a3418d8ff06e8c60dfae"),
+    "SZ7E41": ("Just Dance 2017.rvz", 0, "fa7e5cda4da2a1ddafcc71f32bfaa1a4acca311dcafde939b247b49bb9896d16"),
 }
+EMBEDDED_TITLES = {"SJOE41": "jd2014_title", "SE3E41": "jd2015_title", "SJDE41": "jd3_title"}
 BACKUPS = Path("/mnt/synology/Games/wii")
 
 
@@ -45,7 +51,7 @@ def checksum(path):
 
 
 def verify_disc(disc, disc_id):
-    _, revision, dol_checksum = PILOTS[disc_id]
+    _, revision, dol_checksum = DISCS[disc_id]
     with (disc / "disc/header.bin").open("rb") as raw_header:
         header = raw_header.read(8)
     with (disc / "sys/boot.bin").open("rb") as boot:
@@ -74,31 +80,60 @@ def build_environment():
     return env
 
 
+def prepare_archive(destination, archive_name, url, sha256, directory):
+    if destination.exists():
+        return
+    CACHE.mkdir(parents=True, exist_ok=True)
+    archive = CACHE / archive_name
+    with tempfile.TemporaryDirectory(dir=CACHE) as temp:
+        staging = Path(temp)
+        if not archive.is_file():
+            downloaded = staging / "upstream.tar.gz"
+            urlretrieve(url, downloaded)
+            if checksum(downloaded) != sha256:
+                raise ValueError(f"SHA-256 mismatch for {archive_name}")
+            downloaded.rename(archive)
+        if checksum(archive) != sha256:
+            raise ValueError(f"SHA-256 mismatch for {archive}")
+        with tarfile.open(archive) as source:
+            source.extractall(staging, filter="data")
+        (staging / directory).rename(destination)
+
+
+def apply_patch(folder, patch):
+    command = ["patch", "-p1", "-i", str(patch)]
+    applied = subprocess.run(
+        [*command, "--force", "--reverse", "--dry-run"], cwd=folder,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    if applied.returncode:
+        subprocess.run([*command, "--batch", "--forward"], cwd=folder, check=True)
+
+
 def prepare_upstream():
-    if not UPSTREAM.exists():
-        CACHE.mkdir(parents=True, exist_ok=True)
-        archive = CACHE / "wii-recomp-55fb408.tar.gz"
-        with tempfile.TemporaryDirectory(dir=CACHE) as temp:
-            staging = Path(temp)
-            if not archive.is_file():
-                downloaded = staging / "upstream.tar.gz"
-                urlretrieve(f"https://codeload.github.com/Zontex/wii-recomp/tar.gz/{REVISION}", downloaded)
-                if checksum(downloaded) != ARCHIVE_SHA256:
-                    raise ValueError("The Wii Recomp archive failed its SHA-256 check")
-                downloaded.rename(archive)
-            if checksum(archive) != ARCHIVE_SHA256:
-                raise ValueError(f"The Wii Recomp archive failed its SHA-256 check: {archive}")
-            with tarfile.open(archive) as source:
-                source.extractall(staging, filter="data")
-            (staging / f"wii-recomp-{REVISION}").rename(UPSTREAM)
+    prepare_archive(UPSTREAM, "wii-recomp-55fb408.tar.gz",
+                    f"https://codeload.github.com/Zontex/wii-recomp/tar.gz/{REVISION}",
+                    ARCHIVE_SHA256, f"wii-recomp-{REVISION}")
     for patch in sorted((ROOT / "patches").glob("*.patch")):
-        command = ["patch", "-p1", "-i", str(patch)]
-        applied = subprocess.run(
-            [*command, "--force", "--reverse", "--dry-run"], cwd=UPSTREAM,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        if applied.returncode:
-            subprocess.run([*command, "--batch", "--forward"], cwd=UPSTREAM, check=True)
+        apply_patch(UPSTREAM, patch)
+
+
+def build_btstack(jobs, env, clang):
+    name = f"btstack-{BTSTACK_VERSION}"
+    source = CACHE / name
+    prepare_archive(source, f"{name}.tar.gz",
+                    f"https://codeload.github.com/bluekitchen/btstack/tar.gz/refs/tags/v{BTSTACK_VERSION}",
+                    BTSTACK_SHA256, name)
+    apply_patch(source, ROOT / "deps/btstack-usb.patch")
+    build_dir = CACHE / f"{name}-build"
+    subprocess.run(["cmake", "-S", str(ROOT / "deps"), "-B", str(build_dir), "-G", "Ninja",
+                    "-DCMAKE_BUILD_TYPE=Release", f"-DCMAKE_C_COMPILER={shutil.which(clang, path=env['PATH'])}",
+                    f"-DBTSTACK_SOURCE={source}"], env=env, check=True)
+    subprocess.run(["cmake", "--build", str(build_dir), "-j", str(jobs)], env=env, check=True)
+    flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs", "libusb-1.0"],
+                                               env=env, text=True))
+    includes = [f"-I{ROOT / 'deps'}", f"-I{source / 'src'}", f"-I{source / 'platform/posix'}"]
+    return includes, [str(build_dir / "libcouch-btstack.a"), *flags]
 
 
 def prepare_disc(disc, disc_id, image, env):
@@ -124,7 +159,7 @@ def build(disc_id, image, jobs):
     env = build_environment()
     disc = CACHE / "discs" / disc_id
     prepare_disc(disc, disc_id, image, env)
-    if disc_id == "SJOE41":
+    if disc_id in ("SJOE41", "SE3E41"):
         adapter = RUNTIME / "runtime/jd2014_probe.c"
         adapter_source = (ROOT / "probe/jd2014.c").read_bytes()
         if not adapter.exists() or adapter.read_bytes() != adapter_source:
@@ -134,9 +169,12 @@ def build(disc_id, image, jobs):
          "--no-pack", "--jobs", str(jobs), "--fifo-breakpoints"],
         cwd=UPSTREAM, env=env, check=True,
     )
-    if disc_id == "SJOE41":
+    if disc_id in EMBEDDED_TITLES:
         title_build = RUNTIME / f"build-{disc_id}"
-        instrument(title_build / "generated")
+        if disc_id in ("SJOE41", "SE3E41"):
+            instrument(title_build / "generated", disc_id)
+        else:
+            fix_jd3_stream_wait(title_build / "generated")
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
 
 
@@ -185,22 +223,42 @@ def build_couch(jobs):
     prepare_upstream()
     env = build_environment()
     adapter = RUNTIME / "runtime/jd2014_probe.c"
-    for disc_id in PILOTS:
+    for disc_id in EMBEDDED_TITLES:
         if not (RUNTIME / f"build-{disc_id}/title.so").is_file():
             raise ValueError(f"Run python3 pilot.py build --disc {disc_id} first")
+    jd2014 = CACHE / "discs/SJOE41"
+    verify_disc(jd2014, "SJOE41")
+    prepare_previews(jd2014, CACHE / "previews/SJOE41", jobs)
+    jd2015 = CACHE / "discs/SE3E41"
+    verify_disc(jd2015, "SE3E41")
+    prepare_previews(jd2015, CACHE / "previews/SE3E41", jobs)
+    jd2014_build = RUNTIME / "build-SJOE41"
+    instrument(jd2014_build / "generated")
+    subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=jd2014_build, env=env, check=True)
+    jd2015_build = RUNTIME / "build-SE3E41"
+    instrument(jd2015_build / "generated", "SE3E41")
+    subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=jd2015_build, env=env, check=True)
+    jd3 = RUNTIME / "build-SJDE41"
+    verify_disc(CACHE / "discs/SJDE41", "SJDE41")
+    fix_jd3_stream_wait(jd3 / "generated")
+    subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=jd3, env=env, check=True)
     adapter_source = (ROOT / "probe/jd2014.c").read_bytes()
     if not adapter.exists() or adapter.read_bytes() != adapter_source:
         adapter.write_bytes(adapter_source)
     console = RUNTIME / "build"
     subprocess.run(["ninja", "-j", str(jobs), "wii-recomp"], cwd=console, env=env, check=True)
     clang, runtime_objects, link_flags = link_command(console, "wii-recomp", env)
+    bluetooth_includes, bluetooth_flags = build_btstack(jobs, env, clang)
+    font_flags = shlex.split(subprocess.check_output(
+        ["pkg-config", "--cflags", "--libs", "fontconfig", "freetype2"], env=env, text=True,
+    ))
 
     output_folder = CACHE / "bin"
     output_folder.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=CACHE) as temp:
         staging = Path(temp)
         title_objects = []
-        for disc_id, symbol in (("SJOE41", "jd2014_title"), ("SJDE41", "jd3_title")):
+        for disc_id, symbol in EMBEDDED_TITLES.items():
             folder = RUNTIME / f"build-{disc_id}"
             _, original, _ = link_command(folder, "title.so", env)
             combined = staging / f"{disc_id}.o"
@@ -210,6 +268,20 @@ def build_couch(jobs):
                 env=env, check=True,
             )
             title_objects.append(str(combined))
+
+        covers = staging / "covers.o"
+        cover_files = []
+        for map_name in ("JustDance", "GetLucky"):
+            bmp = f"{map_name}.bmp"
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-i", str(ROOT / f"assets/{map_name}.jpg"),
+                 "-pix_fmt", "bgr24", bmp], cwd=staging, env=env, check=True,
+            )
+            cover_files.append(bmp)
+        subprocess.run(["ld", "-r", "-b", "binary", "-o", str(covers), *cover_files],
+                       cwd=staging, env=env, check=True)
+        subprocess.run(["objcopy", "--rename-section", ".data=.rodata,alloc,load,readonly,data,contents",
+                        str(covers)], env=env, check=True)
 
         main_object = staging / "runtime_main.o"
         original_main = subprocess.check_output(
@@ -228,8 +300,11 @@ def build_couch(jobs):
         if "SDL3_PREFIX" in env:
             includes.append(f"-I{env['SDL3_PREFIX']}/include")
         subprocess.run(
-            [clang, "-O2", *includes, str(ROOT / "app/couch.c"), str(ROOT / "app/worker.c"),
-             str(main_object), *runtime_objects, *title_objects, "-o", str(result), *link_flags],
+            [clang, "-O2", *includes, *bluetooth_includes, str(ROOT / "app/couch.c"),
+             str(ROOT / "app/worker.c"), str(ROOT / "app/usb_remote.c"), str(ROOT / "app/song_grid.c"),
+             str(ROOT / "app/catalog.c"),
+             str(main_object), str(covers), *runtime_objects, *title_objects, "-o", str(result),
+             "-Wl,-z,noexecstack", *bluetooth_flags, *font_flags, *link_flags],
             cwd=console, env=env, check=True,
         )
         destination = output_folder / "just-dance-couch"
@@ -243,13 +318,13 @@ def main():
     compiler = commands.add_parser("build", help="extract the owned disc and build locally")
     compiler.add_argument("--image", type=Path)
     compiler.add_argument("--jobs", type=int, default=6)
-    couch = commands.add_parser("couch", help="link both built titles and the browser into one executable")
+    couch = commands.add_parser("couch", help="link the built titles and the browser into one executable")
     couch.add_argument("--jobs", type=int, default=6)
     runner = commands.add_parser("boot", help="run a title in strict-native mode")
     runner.add_argument("--song", choices=("GetLucky", "JustDance"), help="probe the direct-launch branch")
     runner.add_argument("--fresh", action="store_true", help="use a new isolated save directory")
     for command in (compiler, runner):
-        command.add_argument("--disc", choices=PILOTS, default="SJOE41", help="disc ID (default SJOE41)")
+        command.add_argument("--disc", choices=DISCS, default="SJOE41", help="disc ID (default SJOE41)")
     args = parser.parse_args()
     try:
         if args.command == "boot":
@@ -261,7 +336,7 @@ def main():
                 if args.command == "couch":
                     build_couch(args.jobs)
                 else:
-                    image = args.image or BACKUPS / PILOTS[args.disc][0]
+                    image = args.image or BACKUPS / DISCS[args.disc][0]
                     build(args.disc, image.expanduser().resolve(strict=True), args.jobs)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"pilot: {error}\n")

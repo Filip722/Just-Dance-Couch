@@ -1,0 +1,144 @@
+--- a/recomp/runtime/window.c
++++ b/recomp/runtime/window.c
+@@ -24,6 +24,12 @@
+ #include "ios.h"
+ 
+ enum { WINDOW_HEIGHT = 720, POWER_OFF_SECONDS = 5 };
++
++#ifdef __linux__
++extern int jd_couch_loading(void) __attribute__((weak));
++extern int jd_couch_reveal_ready(void) __attribute__((weak));
++extern void jd_couch_window_shown(void) __attribute__((weak));
++#endif
+ 
+ static GLFWwindow *window;
+ static int frame_width, frame_height;
+@@ -179,7 +185,30 @@
+   uint8_t widescreen = 0;
+   files_system_setting("IPL.AR", &widescreen, 1);
+   int aspect_width = widescreen ? 16 : 4, aspect_height = widescreen ? 9 : 3;
+-  window = glfwCreateWindow(WINDOW_HEIGHT * aspect_width / aspect_height, WINDOW_HEIGHT, "Wii Recomp", 0, 0);
++#ifdef __linux__
++  int hidden = jd_couch_loading && jd_couch_loading();
++  if (hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
++#else
++  int hidden = 0;
++#endif
++  int width = WINDOW_HEIGHT * aspect_width / aspect_height, height = WINDOW_HEIGHT;
++  int keep_aspect = 1;
++#ifdef GLFW_PLATFORM_WAYLAND
++  if (hidden && glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
++    // The first attached buffer must match the fullscreen configure. Size the
++    // hidden Vulkan window before its swapchain is created.
++    GLFWmonitor *monitor = glfwGetPrimaryMonitor();
++    const GLFWvidmode *mode = monitor ? glfwGetVideoMode(monitor) : 0;
++    if (mode) {
++      float xscale, yscale;
++      glfwGetMonitorContentScale(monitor, &xscale, &yscale);
++      width = (int)(mode->width / xscale + 0.5f);
++      height = (int)(mode->height / yscale + 0.5f);
++      keep_aspect = 0;
++    }
++  }
++#endif
++  window = glfwCreateWindow(width, height, "Wii Recomp", 0, 0);
+   if (!window) { fprintf(stderr, "stop: no window\n"); exit(10); }
+-  glfwSetWindowAspectRatio(window, aspect_width, aspect_height);
++  if (keep_aspect) glfwSetWindowAspectRatio(window, aspect_width, aspect_height);
+   glfwSetKeyCallback(window, on_key);
+@@ -187,7 +214,7 @@
+   glfwSetMouseButtonCallback(window, on_mouse_button);
+   gx_backend->window_ready(window);
+   const char *wanted = getenv("WII_RECOMP_FULLSCREEN");
+-  if (wanted && wanted[0] && wanted[0] != '0') set_fullscreen(1);
++  if (!hidden && wanted && wanted[0] && wanted[0] != '0') set_fullscreen(1);
+ }
+ 
+ struct GLFWwindow *window_handle(void) { return window; }
+@@ -221,9 +248,19 @@
+   while (!glfwWindowShouldClose(window) && !stop_signal) {
+     glfwWaitEventsTimeout(pads_wait_seconds());
+     pads_poll();
++#ifdef __linux__
++    if (jd_couch_reveal_ready && jd_couch_reveal_ready()) {
++      glfwShowWindow(window);
++      set_fullscreen(1);
++      jd_couch_window_shown();
++    }
++#endif
+   }
+   if (stop_signal) fprintf(stderr, "console: asked to stop (signal %d)\n", (int)stop_signal);
+   else fprintf(stderr, "console: the window was asked to close\n");  // By the window system: its close button, or a program closing it.
++#ifdef __linux__
++  if (jd_couch_reveal_ready) glfwHideWindow(window);
++#endif
+   if (power_button_press()) {
+     fprintf(stderr, "console: the power button is pressed\n");
+     for (double until = glfwGetTime() + POWER_OFF_SECONDS; glfwGetTime() < until;) {
+--- a/recomp/runtime/audio_output_linux.c
++++ b/recomp/runtime/audio_output_linux.c
+@@ -2,6 +2,8 @@
+ // PipeWire. ALSA has no callback here, so a thread of our own writes each period.
+ #include <alsa/asoundlib.h>
+ #include <pthread.h>
++#include <string.h>
++#include <time.h>
+ 
+ #include "audio.h"
+ 
+@@ -9,18 +11,10 @@
+ #define LATENCY_MICROSECONDS 40000
+ 
+ static snd_pcm_t *device;
++extern int jd_couch_loading(void) __attribute__((weak));
++extern int jd_couch_waiting_for_song(void) __attribute__((weak));
+ 
+-static void *output_thread(void *unused) {
+-  (void)unused;
+-  static int16_t period[PERIOD_SAMPLES * AUDIO_CHANNELS];
+-  while (1) {
+-    audio_pull(period, PERIOD_SAMPLES);
+-    snd_pcm_sframes_t wrote = snd_pcm_writei(device, period, PERIOD_SAMPLES);
+-    if (wrote < 0 && snd_pcm_recover(device, (int)wrote, 1) < 0) return 0;
+-  }
+-}
+-
+-int audio_output_open(void) {
++static int open_device(void) {
+   int error = snd_pcm_open(&device, "default", SND_PCM_STREAM_PLAYBACK, 0);
+   if (error >= 0) {
+     error = snd_pcm_set_params(device, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, AUDIO_CHANNELS,
+@@ -30,6 +24,33 @@
+     fprintf(stderr, "sound device: %s\n", snd_strerror(error));
+     return 0;
+   }
++  return 1;
++}
++
++static void *output_thread(void *unused) {
++  (void)unused;
++  static int16_t period[PERIOD_SAMPLES * AUDIO_CHANNELS];
++  // The grid owns the host audio device for previews until a song is chosen.
++  const struct timespec period_time = {0, 1000000000L * PERIOD_SAMPLES / AUDIO_SAMPLE_RATE};
++  while (jd_couch_waiting_for_song && jd_couch_waiting_for_song()) {
++    audio_pull(period, PERIOD_SAMPLES);
++    nanosleep(&period_time, NULL);
++  }
++  if (!open_device()) return NULL;
++  while (1) {
++    audio_pull(period, PERIOD_SAMPLES);
++    if (jd_couch_loading && jd_couch_loading()) memset(period, 0, sizeof period);
++    snd_pcm_uframes_t position = 0;
++    while (position < PERIOD_SAMPLES) {
++      snd_pcm_sframes_t wrote = snd_pcm_writei(device, period + position * AUDIO_CHANNELS,
++                                              PERIOD_SAMPLES - position);
++      if (wrote > 0) position += wrote;
++      else if (wrote < 0 && snd_pcm_recover(device, (int)wrote, 1) < 0) return NULL;
++    }
++  }
++}
++
++int audio_output_open(void) {
+   pthread_t thread;
+   return pthread_create(&thread, 0, output_thread, 0) == 0;
+ }

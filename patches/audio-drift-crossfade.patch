@@ -1,0 +1,36 @@
+--- a/recomp/runtime/audio.c
++++ b/recomp/runtime/audio.c
+@@ -42,6 +42,7 @@
+ #define TARGET_STEP_SAMPLES 800u  // Each time the ring runs dry, the target rises by 25 ms...
+ #define MAX_TARGET_SAMPLES 6400u  // ...up to 200 ms, to stay close to the picture.
+ #define DRIFT_MARGIN 480u  // Past this distance from the target, nudge the position.
++#define DRIFT_BLEND_SAMPLES 8u
+ 
+ #define WAVE_HEADER_BYTES 44
+ 
+@@ -111,12 +112,23 @@
+   uint32_t done = 0;
+   if (refilling && waiting >= target) refilling = 0;
+   if (!refilling) {
++    uint32_t unadjusted = position, available = waiting;
+     if (waiting > target + DRIFT_MARGIN) { position++; waiting--; }
+     else if (waiting < target - DRIFT_MARGIN && waiting > 0) { position--; waiting++; }
+     for (; done < samples && waiting; done++, waiting--, position++) {
+       uint32_t at = position % RING_SAMPLES * AUDIO_CHANNELS;
+-      output[done * AUDIO_CHANNELS] = ring[at];
+-      output[done * AUDIO_CHANNELS + 1] = ring[at + 1];
++      if (position != unadjusted + done && done < DRIFT_BLEND_SAMPLES && done < available) {
++        // Crossfade the one-sample clock correction instead of stepping the waveform.
++        uint32_t old = (unadjusted + done) % RING_SAMPLES * AUDIO_CHANNELS;
++        int old_weight = (int)(DRIFT_BLEND_SAMPLES - done), new_weight = (int)(done + 1);
++        for (int channel = 0; channel < AUDIO_CHANNELS; channel++) {
++          int value = ring[old + channel] * old_weight + ring[at + channel] * new_weight;
++          output[done * AUDIO_CHANNELS + channel] = value / (old_weight + new_weight);
++        }
++      } else {
++        output[done * AUDIO_CHANNELS] = ring[at];
++        output[done * AUDIO_CHANNELS + 1] = ring[at + 1];
++      }
+     }
+     atomic_store_explicit(&played, position, memory_order_release);
+   }

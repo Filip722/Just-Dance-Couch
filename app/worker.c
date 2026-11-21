@@ -1,7 +1,9 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -9,15 +11,18 @@
 #include <unistd.h>
 
 #include "input.h"
+#include "paths.h"
 #include "remote_link.h"
 #include "session.h"
+#include "song_grid.h"
 #include "title.h"
 
-extern const Title jd2014_title, jd3_title;
+extern const Title jd2014_title, jd2015_title, jd3_title;
 int jd_runtime_main(int count, char **arguments);
 
 const Title *jd_builtin_title(const char *path) {
   if (!strcmp(path, "builtin:SJOE41")) return &jd2014_title;
+  if (!strcmp(path, "builtin:SE3E41")) return &jd2015_title;
   if (!strcmp(path, "builtin:SJDE41")) return &jd3_title;
   return NULL;
 }
@@ -41,6 +46,46 @@ int session_read(int socket, SessionMessage *message, int flags) {
 
 static int bridge_socket = -1;
 static int test_input;
+enum { GAME_WINDOW_NORMAL, GAME_WINDOW_HIDDEN, GAME_WINDOW_READY, GAME_WINDOW_SHOWN };
+static atomic_int game_window;
+static atomic_int requested_song;
+static int library_ready;
+static const Edition *edition;
+
+const char *jd_couch_requested_map(void) {
+  int selected = atomic_load(&requested_song);
+  return selected ? edition->songs[selected - 1].map : NULL;
+}
+
+void jd_couch_library_ready(void) {
+  if (bridge_socket >= 0 && !library_ready) {
+    library_ready = 1;
+    session_send(bridge_socket, LIBRARY_READY, NULL, 0);
+  }
+}
+
+int jd_couch_waiting_for_song(void) {
+  return bridge_socket >= 0 && !atomic_load(&requested_song);
+}
+
+int jd_couch_reveal_ready(void) {
+  return atomic_load(&game_window) == GAME_WINDOW_READY;
+}
+
+int jd_couch_loading(void) {
+  int state = atomic_load(&game_window);
+  return state == GAME_WINDOW_HIDDEN || state == GAME_WINDOW_READY;
+}
+
+void jd_couch_gameplay_ready(void) {
+  int hidden = GAME_WINDOW_HIDDEN;
+  atomic_compare_exchange_strong(&game_window, &hidden, GAME_WINDOW_READY);
+}
+
+void jd_couch_window_shown(void) {
+  atomic_store(&game_window, GAME_WINDOW_SHOWN);
+  session_send(bridge_socket, GAME_VISIBLE, NULL, 0);
+}
 
 void jd_couch_game_event(int recap) {
   if (bridge_socket >= 0) session_send(bridge_socket, recap ? RECAP_ENTERED : DANCE_STARTED, NULL, 0);
@@ -71,6 +116,10 @@ static void *read_remote(void *unused) {
   SessionMessage message;
   while (session_read(bridge_socket, &message, 0) > 0) {
     switch (message.type) {
+      case SELECT_SONG:
+        if (message.size == 1 && edition && message.data[0] < edition->count)
+          atomic_store(&requested_song, message.data[0] + 1);
+        break;
       case REMOTE_CONNECTED:
         if (remote >= 0) link_lost(remote);
         if (message.size == 6) remote = link_attach(message.data, "Nintendo RVL-CNT-01", &operations, NULL);
@@ -90,32 +139,19 @@ static void *read_remote(void *unused) {
   return NULL;
 }
 
-int jd_couch_bridge_start(void) {
-  if (test_input || bridge_socket < 0) return 0;
+static void start_bridge_reader(void) {
   pthread_t thread;
   if (pthread_create(&thread, NULL, read_remote, NULL) != 0) {
     fprintf(stderr, "couch: cannot start the remote report bridge\n");
     exit(10);
   }
   pthread_detach(thread);
+}
+
+int jd_couch_bridge_start(void) {
+  if (test_input || bridge_socket < 0) return 0;
+  start_bridge_reader();
   return 1;
-}
-
-static int directory_tree(char *path) {
-  for (char *slash = path + 1; (slash = strchr(slash, '/')); slash++) {
-    *slash = 0;
-    int ok = mkdir(path, 0700) == 0 || errno == EEXIST;
-    *slash = '/';
-    if (!ok) return 0;
-  }
-  return mkdir(path, 0700) == 0 || errno == EEXIST;
-}
-
-static int root_path(char *result, size_t capacity, const char *variable, const char *fallback) {
-  const char *xdg = getenv(variable);
-  if (xdg && xdg[0] == '/') return snprintf(result, capacity, "%s/just-dance-couch", xdg) < (int)capacity;
-  const char *home = getenv("HOME");
-  return home && snprintf(result, capacity, "%s/%s/just-dance-couch", home, fallback) < (int)capacity;
 }
 
 static int check_header(const char *root, const char *disc, const char *relative, const void *expected, size_t size) {
@@ -131,7 +167,9 @@ static int check_header(const char *root, const char *disc, const char *relative
 
 int run_worker(char *program, const char *disc, const char *map, int socket, int simulated) {
   char cache[PATH_MAX], state[PATH_MAX], sys[PATH_MAX], saves[PATH_MAX], builtin[24];
-  if (strcmp(disc, "SJOE41") && strcmp(disc, "SJDE41")) return 10;
+  for (int i = 0; i < EDITION_COUNT; i++)
+    if (!strcmp(disc, editions[i].disc)) edition = &editions[i];
+  if (!edition && strcmp(disc, "SJDE41")) return 10;
   if (!root_path(cache, sizeof cache, "XDG_CACHE_HOME", ".cache") ||
       !root_path(state, sizeof state, "XDG_DATA_HOME", ".local/share") ||
       snprintf(sys, sizeof sys, "%s/discs/%s/sys", cache, disc) >= (int)sizeof sys ||
@@ -157,10 +195,27 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   setenv("WII_RECOMP_REMOTES", simulated ? "loopback" : "real", 1);
   setenv("WII_RECOMP_ATTACHMENT", "none", 0);
   setenv("WII_RECOMP_SHOP_SERVER", "off", 1);
-  if (socket >= 0) setenv("WII_RECOMP_FULLSCREEN", "1", 1);
+  if (socket >= 0) {
+    const char *trace = getenv("JUST_DANCE_GAME_TRACE");
+    if (!trace || strcmp(trace, "1")) {
+      char log[PATH_MAX];
+      int length = snprintf(log, sizeof log, "%s/game-%ld.log", cache, (long)getppid());
+      if (length >= 0 && length < (int)sizeof log) {
+        int fd = open(log, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (fd >= 0) {
+          dup2(fd, STDOUT_FILENO);
+          dup2(fd, STDERR_FILENO);
+          close(fd);
+        }
+      }
+    }
+    setenv("WII_RECOMP_FULLSCREEN", "1", 1);
+    atomic_store(&game_window, GAME_WINDOW_HIDDEN);
+    if (simulated) start_bridge_reader();
+  }
   setenv("WII_RECOMP_REMOTE_SLOTS", "remotes.txt", 0);
   setenv("WII_RECOMP_CONTROLLERS", "controllers.ini", 0);
-  if (map) setenv("JD2014_PROBE_MAP", map, 1);
+  if (map && strcmp(map, "-")) setenv("JD2014_PROBE_MAP", map, 1);
   else unsetenv("JD2014_PROBE_MAP");
   char *arguments[] = {program, sys, NULL};
   return jd_runtime_main(2, arguments);

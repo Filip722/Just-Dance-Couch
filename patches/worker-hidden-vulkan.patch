@@ -1,0 +1,42 @@
+--- a/recomp/runtime/gx_vulkan.c
++++ b/recomp/runtime/gx_vulkan.c
+@@ -1709,7 +1709,12 @@
+   if (off || at_once || !gx_shows_held || !last_shown || held_show.due <= now) show_now(0);
+ }
+ 
++// The couch worker renders the game's EFB while its window is hidden.
++// Acquiring or presenting swapchain images can block on an unmapped surface.
++extern int jd_couch_loading(void) __attribute__((weak));
++
+ static void present(const GxRectangle *from) {
++  int hidden = jd_couch_loading && jd_couch_loading();
+   int unshown = 0;
+   if (held_show.waiting) {
+     // The held picture goes first if it's due within half a field: the next one has come
+@@ -1730,7 +1735,7 @@
+   if (vk_picture_sink) read_picture_back(frame->draw, from);
+   uint32_t image_index = 0;
+   int outdated = 0;
+-  if (vk.show_queue && vk.swapchain) {
++  if (!hidden && vk.show_queue && vk.swapchain) {
+     // The window gets a copy, shown on its own queue, so the game never waits for it.
+     // See gx_vulkan_window.c.
+     int slot = vk_window_take_slot();
+@@ -1749,7 +1754,7 @@
+     goto shown;
+   }
+   TIMELINE_BEGIN("window picture");
+-  VkResult acquired = vk.swapchain && !unshown ? vkAcquireNextImageKHR(vk.device, vk.swapchain, ACQUIRE_TIMEOUT_NS, frame->image_ready, VK_NULL_HANDLE, &image_index) : VK_NOT_READY;
++  VkResult acquired = !hidden && vk.swapchain && !unshown ? vkAcquireNextImageKHR(vk.device, vk.swapchain, ACQUIRE_TIMEOUT_NS, frame->image_ready, VK_NULL_HANDLE, &image_index) : VK_NOT_READY;
+   TIMELINE_END("window picture");
+   int showing = acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR;
+   outdated = acquired == VK_SUBOPTIMAL_KHR || acquired == VK_ERROR_OUT_OF_DATE_KHR;
+@@ -1767,7 +1772,7 @@
+ shown:
+   mark_report();
+   if (vk_picture_sink) hand_picture_over(frame);
+-  if (vk.swapchain) {
++  if (!hidden && vk.swapchain) {
+     TIMELINE_BEGIN("window size");
+     window_refresh_size();
+     TIMELINE_END("window size");
