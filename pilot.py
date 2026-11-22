@@ -16,7 +16,9 @@ from urllib.request import urlretrieve
 
 from probe import jd1
 from probe.collection import EDITIONS, catalog, write_catalog
-from probe.instrument import fix_jd2_bigfile, fix_lyn_stream_wait, instrument, instrument_jd3
+from probe.instrument import (
+    LYN_VERTEX_COPY_SITES, fix_jd2_bigfile, fix_lyn_stream_wait, instrument, instrument_jd3,
+)
 from probe.lyn_previews import JD3_SONGS, prepare_jd3_previews
 from probe.previews import prepare_previews
 
@@ -189,17 +191,18 @@ def build(disc_id, image, jobs):
          "--no-pack", "--jobs", str(jobs), "--fifo-breakpoints"],
         cwd=UPSTREAM, env=env, check=True,
     )
-    if disc_id in EMBEDDED_TITLES or disc_id == "SD2Y41":
+    if disc_id in EMBEDDED_TITLES or disc_id in LYN_VERTEX_COPY_SITES:
         title_build = RUNTIME / f"build-{disc_id}"
-        if disc_id in ("SJOE41", "SE3E41", "SDNE41") or disc_id in EDITIONS:
-            instrument(title_build / "generated", disc_id)
-        elif disc_id == "SJDE41":
-            instrument_jd3(title_build / "generated")
+        generated = title_build / "generated"
+        if disc_id == "SJDE41":
+            instrument_jd3(generated)
             prepare_jd3_previews(disc, CACHE / "previews" / disc_id)
-        elif disc_id == "SD2Y41":
-            fix_lyn_stream_wait(title_build / "generated", disc_id)
+        else:
+            instrument(generated, disc_id)
+        if disc_id == "SD2Y41":
+            fix_lyn_stream_wait(generated, disc_id)
             if (disc / "files/WD2.bbf").is_file() and not (disc / "files/WD2.bf").is_file():
-                fix_jd2_bigfile(title_build / "generated")
+                fix_jd2_bigfile(generated)
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
 
 

@@ -78,7 +78,7 @@ The JD3 song probe enables the compiled script module shipped on the disc. It lo
 
 The original Just Dance probe uses the game’s Quick Play, Regular, one-round and Full version actions. It verifies the movie path before showing gameplay. All 32 native selections opened the matching coach video in loopback tests. The cold DARE launch reached fullscreen in about 19–20 seconds with software Vulkan. One complete run reached its original recap after 226.6 seconds of gameplay and returned to the DARE tile on Enter. Escape during Acceptable in the 80s returned to its tile. Traces and captures are under `probe/legacy-editions/SDNE41/` in the local cache.
 
-The Just Dance 2 build checks for an already completed DVD request before suspending the streaming thread. A loopback test reached stock gameplay after that change. An isolated world-loader probe opened the original Cosmic Girl music and coach streams. Summer Party also reached its original gameplay loop. Their coach video showed horizontal artifacts in the software captures. Traces are under `probe/legacy-editions/`.
+The Just Dance 2 build checks for an already completed DVD request before suspending the streaming thread. The Just Dance 2 and Summer Party builds also preserve the original packed vertex coordinates during loading. This cleared the horizontal distortion in loopback captures for Cosmic Girl and Pon De Replay. An isolated Just Dance 2 probe selected Cosmic Girl through the original catalog and opened its matching title card, music, and coach stream. An isolated Summer Party probe reached Firework through the original controls. Traces and captures are under `probe/legacy-editions/`.
 
 An isolated JD4 trace reached the original song catalog after enabling the corresponding compiled module. A later selected-song attempt stopped at an untranslated indirect call. Traces are in `probe/legacy-launch/SJXE41/`.
 
@@ -95,7 +95,7 @@ All 17 backups produced video under the planning reference run and were compiled
 | Disc | ID | Routine metadata | Native milestone | Selected dance | Physical pass |
 | --- | --- | --- | --- | --- | --- |
 | Just Dance | SDNE41 | 32 original song IDs and cached coach videos | Direct launch, scoring and original recap with loopback. Some software runs reached the recap early. | DARE | Pending |
-| Just Dance 2 | SD2Y41 | `LynWiiRetail.MAP` and `.sel` present | Native stock gameplay after resolving the `WD2.bbf` archive name and the DVD wait race | Pending | Pending |
+| Just Dance 2 | SD2Y41 | `LynWiiRetail.MAP` and `.sel` present | Native stock gameplay after fixing stream waits and packed vertex loading | Cosmic Girl in an isolated catalog probe | Pending |
 | Just Dance 3 | SJDE41 r1 | 73 descriptors in planning, including variants. Take On Me uses `0x2dc0bf8b`. | 32,288 main and 7,923 module functions built. The command-line song probe enables the original compiled scripts. | Pump It renders via the stock menu. Direct selection reaches scoring with a black window. | Pending |
 | Just Dance 4 | SJXE41 | `LynWiiRetail.elf` load bytes match the boot DOL. `.sel` present. | Native compiled scripts populate the song catalog in an isolated trace. | Pending | Pending |
 | Just Dance 2014 | SJOE41 | 80 descriptor paths. All 48 picker songs resolve in the original Classic database. | 44,819 main functions. Original solo scoring and Get Lucky recap verified in strict-native mode. | Just Dance, Get Lucky, and #thatPOWER | Just Dance scoring |
@@ -110,7 +110,7 @@ All 17 backups produced video under the planning reference run and were compiled
 | Just Dance Kids | SDZE41 | Pending | Native translation built | Pending | Pending |
 | Just Dance Kids 2 | SJZE41 | Pending | Native translation built | Pending | Pending |
 | Just Dance Kids 2014 | SJ7E41 | Pending | Native translation built | Pending | Pending |
-| Just Dance Summer Party | SJ9E41 | `LynWiiRetail.sel` present | Native stock gameplay reached | Pending | Pending |
+| Just Dance Summer Party | SJ9E41 | `LynWiiRetail.sel` present | Native stock gameplay with corrected vertex loading | Firework via the stock controls | Pending |
 
 The Kids and Disney Party discs use `data_tbl/game_data.arc` and numbered stages. Their song selection and media formats differ from the 2014–2019 UbiArt adapter.
 

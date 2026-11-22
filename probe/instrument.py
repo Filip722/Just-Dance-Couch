@@ -92,8 +92,21 @@ JD1_SITES = {
     ),
 }
 
+# Priv_Readcpyf32 in the two revisions that store packed vertex words through
+# float registers. The host's flush-to-zero mode would erase some UV values.
+LYN_VERTEX_COPY_SITES = {"SD2Y41": ("80036a18", 0), "SJ9E41": ("80029430", 1)}
+
+
 def instrument(directory, disc="SJOE41"):
-    if disc in UBIART_ADDRESSES:
+    sites = JD1_SITES.copy() if disc == "SDNE41" else {}
+    if disc in LYN_VERTEX_COPY_SITES:
+        address, register = LYN_VERTEX_COPY_SITES[disc]
+        pending = {}
+        sites[address] = (
+            f"wr32((cpu.r[26] + cpu.r[31]), double_to_single(cpu.f[{register}]));",
+            "wr32((cpu.r[26] + cpu.r[31]), cpu.r[3]);",
+        )
+    elif disc in UBIART_ADDRESSES:
         pending = dict(zip(UBIART_ADDRESSES[disc].split(),
                            (JD2015_HOOKS[key] for key in UBIART_HOOK_KEYS.split()), strict=True))
         pending[UBIART_DISPLAY_HOWTO[disc]] = (
@@ -102,7 +115,6 @@ def instrument(directory, disc="SJOE41"):
         )
     else:
         pending = {"SDNE41": JD1_HOOKS, "SE3E41": JD2015_HOOKS}.get(disc, HOOKS).copy()
-    sites = JD1_SITES.copy() if disc == "SDNE41" else {}
     for source in directory.glob("*.c"):
         original = source.read_text()
         modified = original
