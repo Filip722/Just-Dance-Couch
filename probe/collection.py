@@ -76,20 +76,25 @@ def newest_dlc_songs(dlc, edition_order):
     return list(newest.values())
 
 
-def write_catalog(staging, collection, dlc=()):
+def write_catalog(staging, collection, dlc=(), levels=None):
+    levels = levels or {}
     dlc = newest_dlc_songs(dlc, collection.keys())
-    pages = [(edition, f'"{disc}"', f"songs_{disc}", songs)
+    pages = [(edition, disc, f"songs_{disc}", songs)
              for disc, (edition, songs) in collection.items()]
     if dlc:
-        pages.append(("DLC", "NULL", "songs_dlc", sorted(dlc, key=song_order)))
+        pages.append(("DLC", None, "songs_dlc", sorted(dlc, key=song_order)))
     arrays, editions = [], []
     for edition, disc, name, songs in pages:
-        entries = "".join(
-            "  {" + ", ".join(json.dumps(field, ensure_ascii=False) for field in song) + "},\n"
-            for song in songs
-        )
-        arrays.append(f"static const Song {name}[] = {{\n{entries}}};\n")
-        editions.append(f'  {{"{edition}", {disc}, {name}, sizeof {name} / sizeof {name}[0]}},')
+        entries = []
+        for song in songs:
+            fields = [json.dumps(field, ensure_ascii=False) for field in song]
+            if (disc, song) in levels:
+                preview, gameplay = levels[disc, song]
+                fields.extend((f".preview_gain = {preview:.7f}f", f".gameplay_gain = {gameplay:.7f}f"))
+            entries.append("  {" + ", ".join(fields) + "},")
+        arrays.append("\n".join([f"static const Song {name}[] = {{", *entries, "};", ""]))
+        source = json.dumps(disc) if disc else "NULL"
+        editions.append(f'  {{"{edition}", {source}, {name}, sizeof {name} / sizeof {name}[0]}},')
     (staging / "collection_catalog.h").write_text(
         "\n".join([*arrays, "const Edition editions[] = {", *editions, "};", ""]),
         encoding="utf-8",

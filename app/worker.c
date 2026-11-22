@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdatomic.h>
@@ -10,6 +11,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "audio.h"
 #include "input.h"
 #include "paths.h"
 #include "remote_link.h"
@@ -47,10 +49,53 @@ static int library_ready;
 static const Edition *edition;
 static const Song *add_on;
 
-const char *jd_couch_requested_map(void) {
-  if (add_on) return add_on->map;
+static const Song *selected_song(void) {
+  if (add_on) return add_on;
   int selected = atomic_load(&requested_song);
-  return selected ? edition->songs[selected - 1].map : NULL;
+  return selected ? &edition->songs[selected - 1] : NULL;
+}
+
+const char *jd_couch_requested_map(void) {
+  const Song *song = selected_song();
+  return song ? song->map : NULL;
+}
+
+#define LEVEL_PEAK 27570.0f  // -1.5 dBFS at the native sample rate.
+#define RELEASE_SECONDS 0.12f
+
+// Keep one 3 ms block in reserve, so the gain can fall smoothly before a
+// peak. Both ends of the ramp are safe for every sample in the delayed block.
+static void level_block(int16_t *samples, float target) {
+  static int16_t delayed[AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS];
+  static float gain, delayed_limit;
+  int peak = 0;
+  for (uint32_t i = 0; i < AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS; i++) {
+    int magnitude = abs((int)samples[i]);
+    if (magnitude > peak) peak = magnitude;
+  }
+  float limit = peak ? fminf(target, LEVEL_PEAK / peak) : target;
+  if (delayed_limit == 0) gain = delayed_limit = target;
+  float released = gain + (target - gain) * (AUDIO_FRAME_SAMPLES / (AUDIO_SAMPLE_RATE * RELEASE_SECONDS));
+  float end = fminf(released, fminf(delayed_limit, limit));
+  float step = (end - gain) / AUDIO_FRAME_SAMPLES;
+  for (uint32_t i = 0; i < AUDIO_FRAME_SAMPLES; i++) {
+    float level = gain + step * i;
+    for (uint32_t channel = 0; channel < AUDIO_CHANNELS; channel++) {
+      uint32_t at = i * AUDIO_CHANNELS + channel;
+      int16_t input = samples[at];
+      samples[at] = (int16_t)(delayed[at] * level);
+      delayed[at] = input;
+    }
+  }
+  gain = end;
+  delayed_limit = limit;
+}
+
+void jd_couch_level_audio(int16_t *samples, uint32_t frames) {
+  const Song *song = selected_song();
+  if (!song || song->gameplay_gain <= 0 || frames % AUDIO_FRAME_SAMPLES) return;
+  for (uint32_t offset = 0; offset < frames; offset += AUDIO_FRAME_SAMPLES)
+    level_block(samples + offset * AUDIO_CHANNELS, song->gameplay_gain);
 }
 
 unsigned jd_couch_dlc_index(void) {

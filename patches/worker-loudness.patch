@@ -1,0 +1,18 @@
+--- a/recomp/runtime/audio.c
++++ b/recomp/runtime/audio.c
+@@ -55,6 +55,7 @@
+ static int refilling = 1;
+ static FILE *wave;
+ static uint32_t wave_bytes;
++extern void jd_couch_level_audio(int16_t *output, uint32_t frames) __attribute__((weak));
+ 
+ static void put_le(uint8_t *to, uint32_t value, int bytes) {
+   for (int i = 0; i < bytes; i++) to[i] = (uint8_t)(value >> (i * 8));
+@@ -135,6 +136,7 @@
+     refilling = 1;
+     memset(output + done * AUDIO_CHANNELS, 0, (samples - done) * AUDIO_CHANNELS * sizeof(int16_t));
+   }
++  if (jd_couch_level_audio) jd_couch_level_audio(output, samples);
+ }
+ 
+ static uint32_t blocks_per_second(void) {

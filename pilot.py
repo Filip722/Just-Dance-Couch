@@ -21,6 +21,7 @@ from probe.instrument import (
     fix_jd2_bigfile, instrument, instrument_jd3,
 )
 from probe.legacy_ubiart import CLASSIC_CATALOGS
+from probe.loudness import prepare_loudness
 from probe.previews import prepare_previews
 
 
@@ -333,6 +334,7 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
 
     dlc_songs = dlc.prepare_dlc(dlc_directory, CACHE / "dlc", CACHE / "discs", jobs)
+    levels = prepare_loudness(CACHE, collection, dlc_songs, jobs)
     console = RUNTIME / "build"
     subprocess.run(["ninja", "-j", str(jobs), "wii-recomp"], cwd=console, env=env, check=True)
     clang, runtime_objects, link_flags = link_command(console, "wii-recomp", env)
@@ -345,7 +347,7 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
     output_folder.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=CACHE) as temp:
         staging = Path(temp)
-        write_catalog(staging, collection, dlc_songs)
+        write_catalog(staging, collection, dlc_songs, levels)
         registry = staging / "collection_titles.c"
         declarations = "\n".join(f"extern const Title {symbol};" for symbol in EMBEDDED_TITLES.values())
         lookups = "\n".join(f'  if (!strcmp(path, "builtin:{disc}")) return &{symbol};'

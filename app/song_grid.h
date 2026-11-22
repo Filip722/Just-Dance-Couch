@@ -8,6 +8,7 @@ typedef struct {
   const char *title, *artist, *map;
   const char *disc, *pack;
   unsigned content_index;
+  float preview_gain, gameplay_gain;
 } Song;
 
 typedef struct {

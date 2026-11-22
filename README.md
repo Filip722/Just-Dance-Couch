@@ -61,6 +61,10 @@ Each disc page shows that edition’s full supported Classic catalog. The **DLC*
 
 When a song appears in several DLC editions, the DLC page shows the newest available add-on copy. Within that edition, the standard DLC routine takes priority.
 
+## Audio levels
+
+Per-song loudness uses Just Dance 4 as the reference, around −10 LUFS for gameplay and −12.5 LUFS for picker previews. Gameplay has peak protection. The build measures the cached previews with FFmpeg and reuses those measurements until the files change.
+
 ## Local files and logs
 
 - `${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/` holds the extracted discs, builds, previews, and `game-<launcher-pid>.log` files.

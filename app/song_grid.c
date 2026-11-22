@@ -205,7 +205,7 @@ static void open_preview(SongGrid *grid, const Edition *edition, const Song *son
   if (SDL_LoadWAV(path, &audio->format, &audio->pcm, &audio->bytes)) {
     grid->audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audio->format, NULL, NULL);
     if (grid->audio) {
-      SDL_SetAudioStreamGain(grid->audio, 0.55f);
+      SDL_SetAudioStreamGain(grid->audio, song->preview_gain > 0 ? song->preview_gain : 0.55f);
       SDL_PutAudioStreamData(grid->audio, audio->pcm, (int)audio->bytes);
       SDL_ResumeAudioStreamDevice(grid->audio);
     }
