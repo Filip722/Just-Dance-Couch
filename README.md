@@ -4,13 +4,13 @@ A native Linux x86-64 launcher for locally owned Just Dance Wii backups. It buil
 
 ## Current state
 
-- The fullscreen picker opens on **Just Dance 2014** and has 497 routines across the 12 supported Wii editions. Each edition has an alphabetical five-column grid with three visible rows. Press Right at the end of a row or Left at the start of a row to change editions. All 497 tiles have coach and music previews. The launcher warms the edition you are browsing.
+- The fullscreen picker has 497 routines across 12 Wii editions in release order. It opens on the original **Just Dance** and ends at **Just Dance 2019**. Each edition has an alphabetical five-column grid with three visible rows and coach and music previews on every tile. The launcher warms the current edition while you browse.
 - **Just Dance 2014 (USA)** launches all 48 listed routines from the original game. Loopback tests verified scoring in **Just Dance**, **Get Lucky**, and **#thatPOWER**, the **Get Lucky** recap, and return to the selected row after completion and cancellation.
 - **Just Dance 2015 (USA)** launches all 42 listed routines from the original game. The launcher starts the 2015 worker when you open its page and keeps the boot and lobby screens hidden. Loopback tests verified scoring in **4x4** and **Happy**, cancellation from **4x4**, and return to the picker after the **Happy** recap.
 - **Just Dance 3 (USA, revision 1)** adds 47 Classic routines with local coach and music previews. Pump It and Take On Me launched their matching fullscreen routines. Escape returned to their tiles. A complete Pump It run reached the original recap and returned to the same tile on Enter.
 - **Direct USB Wii Remote mode** claims and releases the Nintendo Wii Bluetooth module. Red SYNC pairing, handoff to Player 1, and motion scoring are verified with a physical Wii Remote in Just Dance 2014. A button wake and reconnect were confirmed after restarting the launcher.
 - **Just Dance 2016–2019 (USA)** add 177 Classic disc routines with locally cached previews. Each edition launches its original game directly into the selected dance. Loopback tests reached scoring on **No Control**, **Cheap Thrills**, **24K Magic**, and **Familiar**. Dismissing Familiar’s original recap returned to its selected tile.
-- **Just Dance (USA)** follows 2019 in the picker. All 32 tiles have local coach and music previews and launch the matching original routine. The software checks recorded scoring and the original recap. Some test runs reached the recap early.
+- **Just Dance (USA)** has 32 local coach and music previews and launches the matching original routines. The software checks recorded scoring and the original recap. Some test runs reached the recap early.
 - **Just Dance 2 (USA)** has 47 alphabetical tiles with local coach and music previews. The original game launched Cosmic Girl, Rasputin, and Jai Ho from their native keys. Cosmic Girl reached motion scoring, and Soul Bossa Nova reached the original recap. Cancelling Cosmic Girl and Jai Ho returned to their tiles.
 - **Just Dance Summer Party (USA)** has 23 alphabetical tiles with local coach and music previews. Pon De Replay scored with simulated motion, and Escape returned to its tile. Firework reached original gameplay in an isolated stock launch.
 - **Just Dance Greatest Hits (USA)** adds 37 alphabetical songs with local coach and music previews. Rasputin and Jai Ho opened their original fullscreen routines in loopback. Escape restored the selected tile.
@@ -18,6 +18,14 @@ A native Linux x86-64 launcher for locally owned Just Dance Wii backups. It buil
 - The three Kids and two Disney Party editions are outside this pass. This library has no Just Dance 2020 backup. The picker uses on-disc Classic routines where the edition has multiple modes.
 
 The repository contains the launcher, build scripts, runtime patches, and documentation. Use your own disc backups to build locally. Extracted data, generated title code, saves, binaries, and traces stay in the local cache and data directories.
+
+## Picker controls
+
+- Tap the D-pad to move one tile or hold it to keep moving.
+- Press Up from the first song row to focus the edition name. Left and Right switch editions, and Down or A returns focus to the songs. The grid edges also change editions.
+- Press A on a song tile to play it, and HOME to return from a dance.
+
+Summer Party sits between Just Dance 2 and Just Dance 3. Greatest Hits sits between Just Dance 3 and Just Dance 4. [Summer Party launch trailer](https://www.youtube.com/watch?v=7QLdVGqh75M) · [Greatest Hits launch trailer](https://www.youtube.com/watch?v=E_HiCMU8TIs)
 
 ## Launch and audio checks
 

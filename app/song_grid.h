@@ -23,4 +23,4 @@ SongGrid *song_grid_create(SDL_Renderer *renderer);
 void song_grid_destroy(SongGrid *grid);
 void song_grid_preview(SongGrid *grid, int edition, int selected);
 void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
-                     int loading, const char *status, int keyboard);
+                     bool edition_focused, int loading, const char *status, int keyboard);

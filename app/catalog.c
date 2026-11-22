@@ -99,9 +99,19 @@ static const Song songs_2015[] = {
 
 #include "collection_catalog.h"
 
+// Wii release order, including Summer Party and Greatest Hits.
 const Edition editions[] = {
+  EDITION_SDNE41,
+  EDITION_SD2Y41,
+  EDITION_SJ9E41,
+  EDITION_SJDE41,
+  EDITION_SJHE41,
+  EDITION_SJXE41,
   {"Just Dance 2014", "SJOE41", songs, sizeof songs / sizeof songs[0]},
   {"Just Dance 2015", "SE3E41", songs_2015, sizeof songs_2015 / sizeof songs_2015[0]},
-  COLLECTION_EDITIONS
+  EDITION_SJNE41,
+  EDITION_SZ7E41,
+  EDITION_SE8E41,
+  EDITION_S5EE41,
 };
 const int edition_count = sizeof editions / sizeof editions[0];

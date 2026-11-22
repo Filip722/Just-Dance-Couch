@@ -63,7 +63,5 @@ def write_catalog(staging, collection):
             for song in songs
         )
         arrays.append(f"static const Song {name}[] = {{\n{entries}}};\n")
-        editions.append(f'  {{"{edition}", "{disc}", {name}, sizeof {name} / sizeof {name}[0]}},')
-    (staging / "collection_catalog.h").write_text(
-        "\n".join(arrays) + "#define COLLECTION_EDITIONS " + " ".join(editions) + "\n"
-    )
+        editions.append(f'#define EDITION_{disc} {{"{edition}", "{disc}", {name}, sizeof {name} / sizeof {name}[0]}}')
+    (staging / "collection_catalog.h").write_text("\n".join(arrays + editions) + "\n")

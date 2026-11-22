@@ -24,7 +24,11 @@
 extern char **environ;
 int run_worker(char *program, const char *disc, const char *map, int socket, int simulated);
 
-enum { WORKER_SOCKET = 3, STOP_GRACE_MS = 6000 };
+enum {
+  WORKER_SOCKET = 3, STOP_GRACE_MS = 6000,
+  DPAD_BUTTONS = BUTTON_LEFT | BUTTON_RIGHT | BUTTON_UP | BUTTON_DOWN,
+  DPAD_REPEAT_DELAY_MS = 350, DPAD_REPEAT_INTERVAL_MS = 110,
+};
 enum ReturnReason { RUNNING, COMPLETED, CANCELLED };
 
 typedef struct {
@@ -34,11 +38,11 @@ typedef struct {
   char *program;
   pid_t worker;
   int socket, remote, loopback, release_required, recap, playing, active, warm_next, library_ready;
-  int edition, worker_edition, row, first_row, pending_song;
+  int edition, worker_edition, row, first_row, pending_song, edition_focused;
   int usb, usb_remote, usb_available;
   pthread_t usb_thread;
   uint16_t held;
-  uint64_t launch_started, stop_at;
+  uint64_t launch_started, stop_at, repeat_at;
   uint8_t address[6];
   enum ReturnReason reason;
   const char *status;
@@ -172,6 +176,15 @@ static void end_dance(Browser *browser, enum ReturnReason reason) {
   }
 }
 
+static void change_edition(Browser *browser, int step) {
+  int edition = browser->edition + step;
+  if (edition < 0 || edition >= edition_count) return;
+  browser->edition = edition;
+  browser->row = browser->first_row = 0;
+  browser->warm_next = 1;
+  if (browser->worker) end_dance(browser, CANCELLED);
+}
+
 static void pressed(Browser *browser, uint16_t buttons) {
   if (browser->pending_song) {
     if (buttons & BUTTON_HOME) browser->pending_song = 0;
@@ -182,46 +195,72 @@ static void pressed(Browser *browser, uint16_t buttons) {
     else if (browser->recap && (buttons & BUTTON_A)) end_dance(browser, COMPLETED);
     return;
   }
-  const int previous_edition = browser->edition;
+  if (buttons & DPAD_BUTTONS) browser->status = NULL;
+  if (browser->edition_focused) {
+    if (buttons & BUTTON_LEFT) change_edition(browser, -1);
+    else if (buttons & BUTTON_RIGHT) change_edition(browser, 1);
+    else if (buttons & (BUTTON_DOWN | BUTTON_A)) browser->edition_focused = 0;
+    return;
+  }
   const int count = editions[browser->edition].count;
   const int previous = browser->row;
   const int column = previous % GRID_COLUMNS;
   if (buttons & BUTTON_LEFT) {
     if (column) browser->row--;
-    else if (browser->edition > 0) {
-      browser->edition--;
-      browser->row = browser->first_row = 0;
-    }
+    else change_edition(browser, -1);
   } else if (buttons & BUTTON_RIGHT) {
     if (column + 1 < GRID_COLUMNS && previous + 1 < count) browser->row++;
-    else if (browser->edition + 1 < edition_count) {
-      browser->edition++;
-      browser->row = browser->first_row = 0;
+    else change_edition(browser, 1);
+  } else if (buttons & BUTTON_UP) {
+    if (previous < GRID_COLUMNS) {
+      browser->edition_focused = 1;
+      return;
     }
-  } else if ((buttons & BUTTON_UP) && previous >= GRID_COLUMNS) {
     browser->row -= GRID_COLUMNS;
   } else if ((buttons & BUTTON_DOWN) && previous / GRID_COLUMNS < (count - 1) / GRID_COLUMNS) {
     browser->row = SDL_min(previous + GRID_COLUMNS, count - 1);
   }
-  if (browser->edition != previous_edition) {
-    browser->warm_next = 1;
-    if (browser->worker) end_dance(browser, CANCELLED);
-  }
   int row = browser->row / GRID_COLUMNS;
   if (row < browser->first_row) browser->first_row = row;
   if (row >= browser->first_row + GRID_ROWS) browser->first_row = row - GRID_ROWS + 1;
-  if (buttons & (BUTTON_LEFT | BUTTON_RIGHT | BUTTON_UP | BUTTON_DOWN)) browser->status = NULL;
   if (buttons & BUTTON_A) start_dance(browser);
+}
+
+static void update_buttons(Browser *browser, uint16_t buttons) {
+  uint16_t changed = buttons ^ browser->held;
+  browser->held = buttons;
+  if (changed & DPAD_BUTTONS) browser->repeat_at = SDL_GetTicks() + DPAD_REPEAT_DELAY_MS;
+  if (!browser->loopback && browser->release_required) {
+    if (!buttons) browser->release_required = 0;
+    return;
+  }
+  if (buttons & changed) pressed(browser, buttons & changed);
+}
+
+static void repeat_dpad(Browser *browser, uint64_t now) {
+  uint16_t directions = browser->held & DPAD_BUTTONS;
+  if (directions && !browser->active && !browser->pending_song &&
+      (browser->loopback || !browser->release_required) && now >= browser->repeat_at) {
+    browser->repeat_at = now + DPAD_REPEAT_INTERVAL_MS;
+    pressed(browser, directions);
+  }
+}
+
+static uint16_t keyboard_button(SDL_Keycode key) {
+  switch (key) {
+    case SDLK_LEFT: return BUTTON_LEFT;
+    case SDLK_RIGHT: return BUTTON_RIGHT;
+    case SDLK_UP: return BUTTON_UP;
+    case SDLK_DOWN: return BUTTON_DOWN;
+    case SDLK_RETURN: return BUTTON_A;
+    default: return 0;
+  }
 }
 
 static void handle_report(Browser *browser, uint8_t *report, unsigned length) {
   if (length >= 3 && report[0] >= 0x20 && report[0] <= 0x3f) {
-    const uint16_t actions = BUTTON_UP | BUTTON_DOWN | BUTTON_LEFT | BUTTON_RIGHT | BUTTON_A | BUTTON_HOME;
-    uint16_t buttons = (report[1] | (uint16_t)report[2] << 8) & actions;
-    uint16_t edge = buttons & ~browser->held;
-    browser->held = buttons;
-    if (browser->release_required && !buttons) browser->release_required = 0;
-    if (!browser->release_required && edge) pressed(browser, edge);
+    const uint16_t actions = DPAD_BUTTONS | BUTTON_A | BUTTON_HOME;
+    update_buttons(browser, (report[1] | (uint16_t)report[2] << 8) & actions);
     report[2] &= (uint8_t)~(BUTTON_HOME >> 8);
   }
   if (browser->active && browser->reason == RUNNING) session_send(browser->socket, REMOTE_INPUT, report, length);
@@ -326,13 +365,13 @@ static void paint(const Browser *browser) {
   const char *hint = browser->status;
   if (!hint && !browser->loopback && !has_remote(browser))
     hint = browser->usb >= 0 ? "Wake your Wii Remote or press SYNC" : "Connect a Wii Remote";
-  int preview = !browser->active && !browser->pending_song ? browser->row : -1;
+  int preview = !browser->active && !browser->pending_song && !browser->edition_focused ? browser->row : -1;
   song_grid_preview(browser->grid, browser->edition, preview);
   int loading = browser->pending_song || (browser->active && browser->reason == RUNNING);
   if (loading && (!browser->library_ready || browser->pending_song)) hint = "Preparing the game";
   if (browser->active && !loading) hint = "Returning to the song grid";
   song_grid_paint(browser->grid, browser->edition, browser->row, browser->first_row,
-                  loading, hint, browser->loopback);
+                  browser->edition_focused, loading, hint, browser->loopback);
 }
 
 int main(int count, char **arguments) {
@@ -377,18 +416,17 @@ int main(int count, char **arguments) {
     SDL_Event event;
     if (SDL_WaitEventTimeout(&event, 16)) {
       if (event.type == SDL_EVENT_QUIT) quit = 1;
-      if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
-        if (event.key.key == SDLK_ESCAPE) {
-          if (browser.pending_song) browser.pending_song = 0;
-          else if (browser.active) end_dance(&browser, browser.recap ? COMPLETED : CANCELLED);
-          else quit = 1;
-        }
-        if (browser.loopback && !browser.active) switch (event.key.key) {
-          case SDLK_LEFT: pressed(&browser, BUTTON_LEFT); break;
-          case SDLK_RIGHT: pressed(&browser, BUTTON_RIGHT); break;
-          case SDLK_UP: pressed(&browser, BUTTON_UP); break;
-          case SDLK_DOWN: pressed(&browser, BUTTON_DOWN); break;
-          case SDLK_RETURN: pressed(&browser, BUTTON_A); break;
+      if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE) {
+        if (browser.pending_song) browser.pending_song = 0;
+        else if (browser.active) end_dance(&browser, browser.recap ? COMPLETED : CANCELLED);
+        else quit = 1;
+      }
+      if (browser.loopback) {
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) browser.held = 0;
+        if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) && !event.key.repeat) {
+          uint16_t button = keyboard_button(event.key.key);
+          if (button && (!event.key.down || !browser.active))
+            update_buttons(&browser, event.key.down ? browser.held | button : browser.held & ~button);
         }
       }
     }
@@ -399,8 +437,10 @@ int main(int count, char **arguments) {
     }
     if (browser.usb_available) usb_reports(&browser);
     if (browser.remote >= 0) remote_reports(&browser);
+    if (!quit) repeat_dpad(&browser, now);
     if (browser.worker) update_worker(&browser);
-    if (!quit && !browser.worker && browser.warm_next) {
+    // Start warming once horizontal browsing stops on an edition.
+    if (!quit && !browser.worker && browser.warm_next && !(browser.held & (BUTTON_LEFT | BUTTON_RIGHT))) {
       browser.warm_next = 0;
       start_worker(&browser);
     }

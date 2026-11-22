@@ -9,6 +9,8 @@
 enum {
   WIDTH = 1440, HEIGHT = 810, FONT_COUNT = 3,
   GRID_LEFT = 28, GRID_TOP = 66, HEADER_BASELINE = 42,
+  EDITION_WIDTH = 528, EDITION_TOP = 10, EDITION_HEIGHT = 44,
+  HEADER_STATUS_X = GRID_LEFT + EDITION_WIDTH + 20, HEADER_HINT_X = 1210,
   TILE_WIDTH = 266, TILE_HEIGHT = 232, TILE_GAP = 12, TILE_MEDIA_HEIGHT = 180,
   GRID_WIDTH = GRID_COLUMNS * TILE_WIDTH + (GRID_COLUMNS - 1) * TILE_GAP,
   GRID_HEIGHT = GRID_ROWS * TILE_HEIGHT + (GRID_ROWS - 1) * TILE_GAP,
@@ -304,33 +306,43 @@ static void background(SDL_Renderer *renderer) {
 }
 
 void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
-                     int loading, const char *status, int keyboard) {
+                     bool edition_focused, int loading, const char *status, int keyboard) {
   SDL_Renderer *renderer = grid->renderer;
   const Edition *page = &editions[edition];
   const Song *choice = &page->songs[selected];
   SDL_Color highlight = accent[edition % (sizeof accent / sizeof accent[0])];
   background(renderer);
-  rectangle(renderer, (SDL_FRect){GRID_LEFT, 17, 5, 30}, highlight);
-  text(grid, HEADING, page->title, GRID_LEFT + 16, HEADER_BASELINE, white);
+  SDL_FRect selector = {GRID_LEFT, EDITION_TOP, EDITION_WIDTH, EDITION_HEIGHT};
+  if (edition_focused)
+    rectangle(renderer, (SDL_FRect){selector.x - 3, selector.y - 3, selector.w + 6, selector.h + 6}, highlight);
+  rectangle(renderer, selector, (SDL_Color){40, 25, 65, 255});
+  SDL_Color arrows = edition_focused ? highlight : muted;
+  if (edition > 0) text(grid, TILE, "<", selector.x + 15, HEADER_BASELINE, arrows);
+  text_fit(grid, HEADING, page->title, selector.x + 42, HEADER_BASELINE, selector.w - 84, white);
+  if (edition + 1 < edition_count)
+    text(grid, TILE, ">", selector.x + selector.w - 33, HEADER_BASELINE, arrows);
 
   if (loading) {
     char label[72];
     snprintf(label, sizeof label, "Starting %s", choice->title);
-    text_fit(grid, TILE, status ? status : label, 370, HEADER_BASELINE, 790, white);
+    text_fit(grid, TILE, status ? status : label, HEADER_STATUS_X, HEADER_BASELINE,
+             HEADER_HINT_X - HEADER_STATUS_X, white);
     text(grid, DETAIL, keyboard ? "Esc  Cancel" : "HOME  Cancel", 1262, HEADER_BASELINE, muted);
     float position = (SDL_GetTicks() % 1440) / 1440.0f;
     rectangle(renderer, (SDL_FRect){GRID_LEFT + (GRID_WIDTH - 140) * position, GRID_TOP - 10, 140, 3}, highlight);
   } else {
-    if (status) text_fit(grid, DETAIL, status, 370, HEADER_BASELINE, 570, muted);
-    if (edition > 0) text(grid, DETAIL, "< Left at row start", 985, HEADER_BASELINE, muted);
-    if (edition + 1 < edition_count) text(grid, DETAIL, "Right at row end >", 1210, HEADER_BASELINE, muted);
+    if (status) text_fit(grid, DETAIL, status, HEADER_STATUS_X, HEADER_BASELINE,
+                         HEADER_HINT_X - HEADER_STATUS_X - 20, muted);
+    if (edition_focused) text(grid, DETAIL, "Down  Songs", HEADER_HINT_X, HEADER_BASELINE, muted);
+    else if (selected < GRID_COLUMNS)
+      text(grid, DETAIL, "Up  Editions", HEADER_HINT_X, HEADER_BASELINE, muted);
   }
   for (int i = 0; i < GRID_COLUMNS * GRID_ROWS; i++) {
     int column = i % GRID_COLUMNS, row = i / GRID_COLUMNS;
     SDL_FRect slot = {GRID_LEFT + column * (TILE_WIDTH + TILE_GAP), GRID_TOP + row * (TILE_HEIGHT + TILE_GAP),
                       TILE_WIDTH, TILE_HEIGHT};
     int entry = first_row * GRID_COLUMNS + i;
-    if (entry == selected)
+    if (entry == selected && !edition_focused)
       rectangle(renderer, (SDL_FRect){slot.x - 4, slot.y - 4, slot.w + 8, slot.h + 8}, highlight);
     rectangle(renderer, slot, entry < page->count ? (SDL_Color){32, 22, 53, 255} : (SDL_Color){35, 22, 58, 143});
     if (entry >= page->count) {
