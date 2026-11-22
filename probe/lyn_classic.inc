@@ -7,7 +7,8 @@ static int gh_movie_confirmed, gh_movie_visible, gh_recap, jd4_scene_confirmed;
 void gh_probe_video_frame(void);
 
 void gh_probe_track(void) {
-  if (!jd2_requested_song() || gh_recap) return;
+  if ((!couch_booting() && !jd2_song && !getenv("JD2_PROBE_MAP")) || gh_recap) return;
+  if (!jd2_edition) jd2_edition = jd2_title_edition();
   const char *track = (const char *)host(cpu.r[3] + 8);
   if (!track) return;
   if (gh_stage == GH_DANCE) {
@@ -35,8 +36,12 @@ void gh_probe_track(void) {
     next = GH_CAROUSEL;
   }
   if (gh_stage == GH_CAROUSEL && !strcmp(track, lobby)) next = GH_LOBBY;
-  if (gh_stage == GH_LOBBY && !strcmp(track, transition)) next = GH_TRANSITION;
+  if (gh_stage == GH_LOBBY && !strcmp(track, transition)) {
+    time_boot_finish();
+    next = GH_TRANSITION;
+  }
   if (!strcmp(track, "LevelManager_trk_GameLoop")) {
+    time_boot_finish();
     next = GH_DANCE;
     if (jd4) {
       if (!jd4_scene_confirmed) {
@@ -127,8 +132,9 @@ void gh_probe_video_frame(void) {
 
 
 void jd4_probe_album(uint32_t buffer, uint32_t bytes) {
-  if (bytes != 0x3fffcu || !jd2_requested_song() || rd32(buffer) ||
-      rd32(buffer + 4) != jd2_edition->catalog_signature) return;
+  if (!jd2_edition) jd2_edition = jd2_title_edition();
+  if (!jd2_edition || bytes != jd2_edition->catalog_bytes || rd32(buffer) ||
+      rd32(buffer + 4) != jd2_edition->catalog_signature || !jd2_requested_song()) return;
 
   // These records are consecutive calls to GameCatalog_CreateAlbum.
   // Keep each original argument list and invocation intact as it moves.
@@ -146,7 +152,6 @@ void jd4_probe_album(uint32_t buffer, uint32_t bytes) {
     wr8(a, rd8(b));
     wr8(b, saved);
   }
-  if (!jd2_catalog_ready && jd_couch_library_ready) jd_couch_library_ready();
   jd2_catalog_ready = 1;
 }
 

@@ -99,13 +99,7 @@ static void find_remote(Browser *browser) {
   closedir(devices);
 }
 
-static int needs_song_at_boot(const char *disc) {
-  return !strcmp(disc, "SDNE41") || !strcmp(disc, "SD2Y41") ||
-         !strcmp(disc, "SJ9E41") || !strcmp(disc, "SJHE41") ||
-         !strcmp(disc, "SJDE41") || !strcmp(disc, "SJXE41");
-}
-
-static int start_worker(Browser *browser, const char *map) {
+static int start_worker(Browser *browser) {
   const char *disc = editions[browser->edition].disc;
   int sockets[2];
   if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets)) {
@@ -118,8 +112,7 @@ static int start_worker(Browser *browser, const char *map) {
     error = posix_spawn_file_actions_adddup2(&actions, sockets[1], WORKER_SOCKET);
     char socket_number[12];
     snprintf(socket_number, sizeof socket_number, "%d", WORKER_SOCKET);
-    const char *boot_map = map && needs_song_at_boot(disc) ? map : "-";
-    char *arguments[] = {browser->program, "--worker", (char *)disc, (char *)boot_map,
+    char *arguments[] = {browser->program, "--worker", (char *)disc, "-",
                          socket_number, browser->loopback ? "loopback" : "remote", NULL};
     if (!error) error = posix_spawn(&browser->worker, browser->program, &actions, NULL, arguments, environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -149,7 +142,7 @@ static void start_dance(Browser *browser) {
     end_dance(browser, CANCELLED);
     return;
   }
-  if (!browser->worker && !start_worker(browser, map)) {
+  if (!browser->worker && !start_worker(browser)) {
     browser->status = "Could not start playback";
     return;
   }
@@ -275,7 +268,7 @@ static void usb_reports(Browser *browser) {
 static void update_worker(Browser *browser) {
   SessionMessage message;
   while (session_read(browser->socket, &message, MSG_DONTWAIT) > 0) {
-    if (message.type == LIBRARY_READY) {
+    if (message.type == LIBRARY_READY && browser->reason == RUNNING) {
       browser->library_ready = 1;
       fprintf(stderr, "couch: native song library ready\n");
     }
@@ -409,8 +402,7 @@ int main(int count, char **arguments) {
     if (browser.worker) update_worker(&browser);
     if (!quit && !browser.worker && browser.warm_next) {
       browser.warm_next = 0;
-      // Just Dance selects the song while its database is being populated.
-      if (!needs_song_at_boot(editions[browser.edition].disc)) start_worker(&browser, NULL);
+      start_worker(&browser);
     }
     if (!browser.playing) paint(&browser);
   }

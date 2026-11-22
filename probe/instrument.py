@@ -56,6 +56,7 @@ UBIART_HOOK_KEYS = "8023af10 80189828 80261ce0 80125af0 80124238 801e2fe0 80194f
 
 # JD_GameManager::displayHowTo, called by the lobby entry state.
 UBIART_DISPLAY_HOWTO = {
+    "SE3E41": "80230578",
     "SJNE41": "80547488",
     "SZ7E41": "80548844",
     "SE8E41": "80547760",
@@ -164,12 +165,13 @@ def instrument(directory, disc="SJOE41"):
     elif disc in UBIART_ADDRESSES:
         pending = dict(zip(UBIART_ADDRESSES[disc].split(),
                            (JD2015_HOOKS[key] for key in UBIART_HOOK_KEYS.split()), strict=True))
-        pending[UBIART_DISPLAY_HOWTO[disc]] = (
+    else:
+        pending = {"SDNE41": JD1_HOOKS, "SE3E41": JD2015_HOOKS}.get(disc, HOOKS).copy()
+    if howto := UBIART_DISPLAY_HOWTO.get(disc):
+        pending[howto] = (
             "extern int jd2015_probe_skip_lobby_howto(void); "
             "if (jd2015_probe_skip_lobby_howto()) { cpu.r[3] = 0; return; }"
         )
-    else:
-        pending = {"SDNE41": JD1_HOOKS, "SE3E41": JD2015_HOOKS}.get(disc, HOOKS).copy()
     for source in directory.glob("*.c"):
         original = source.read_text()
         modified = original

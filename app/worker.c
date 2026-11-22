@@ -36,10 +36,13 @@ int session_read(int socket, SessionMessage *message, int flags) {
 }
 
 static int bridge_socket = -1;
-static int test_input;
+static int test_input, fast_boot;
 enum { GAME_WINDOW_NORMAL, GAME_WINDOW_HIDDEN, GAME_WINDOW_READY, GAME_WINDOW_SHOWN };
 static atomic_int game_window;
-static atomic_int requested_song;
+static atomic_int requested_song, boot_parked;
+static pthread_mutex_t selection_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t selection_ready = PTHREAD_COND_INITIALIZER;
+static int bridge_closed;
 static int library_ready;
 static const Edition *edition;
 
@@ -57,6 +60,26 @@ void jd_couch_library_ready(void) {
 
 int jd_couch_waiting_for_song(void) {
   return bridge_socket >= 0 && !atomic_load(&requested_song);
+}
+
+const char *jd_couch_wait_for_map(void) {
+  if (bridge_socket < 0) return NULL;
+  pthread_mutex_lock(&selection_lock);
+  atomic_store(&boot_parked, !atomic_load(&requested_song));
+  jd_couch_library_ready();
+  while (!atomic_load(&requested_song) && !bridge_closed)
+    pthread_cond_wait(&selection_ready, &selection_lock);
+  atomic_store(&boot_parked, 0);
+  pthread_mutex_unlock(&selection_lock);
+  return jd_couch_requested_map();
+}
+
+int jd_couch_fast_boot(void) {
+  return fast_boot;
+}
+
+int jd_couch_boot_parked(void) {
+  return atomic_load(&boot_parked);
 }
 
 int jd_couch_reveal_ready(void) {
@@ -108,8 +131,12 @@ static void *read_remote(void *unused) {
   while (session_read(bridge_socket, &message, 0) > 0) {
     switch (message.type) {
       case SELECT_SONG:
-        if (message.size == 1 && edition && message.data[0] < edition->count)
+        if (message.size == 1 && edition && message.data[0] < edition->count) {
+          pthread_mutex_lock(&selection_lock);
           atomic_store(&requested_song, message.data[0] + 1);
+          pthread_cond_signal(&selection_ready);
+          pthread_mutex_unlock(&selection_lock);
+        }
         break;
       case REMOTE_CONNECTED:
         if (remote >= 0) link_lost(remote);
@@ -127,6 +154,10 @@ static void *read_remote(void *unused) {
     }
   }
   if (remote >= 0) link_lost(remote);
+  pthread_mutex_lock(&selection_lock);
+  bridge_closed = 1;
+  pthread_cond_signal(&selection_ready);
+  pthread_mutex_unlock(&selection_lock);
   return NULL;
 }
 
@@ -206,11 +237,13 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   }
   setenv("WII_RECOMP_REMOTE_SLOTS", "remotes.txt", 0);
   setenv("WII_RECOMP_CONTROLLERS", "controllers.ini", 0);
-  const char *map_variable = "JD2014_PROBE_MAP";
+  const char *map_variable = NULL;
   if (!strcmp(disc, "SDNE41")) map_variable = "JD1_PROBE_MAP";
   else if (!strcmp(disc, "SD2Y41") || !strcmp(disc, "SJ9E41") ||
            !strcmp(disc, "SJHE41") || !strcmp(disc, "SJDE41") || !strcmp(disc, "SJXE41"))
     map_variable = "JD2_PROBE_MAP";
+  fast_boot = socket >= 0 && map_variable;
+  if (!map_variable) map_variable = "JD2014_PROBE_MAP";
   if (map && strcmp(map, "-")) setenv(map_variable, map, 1);
   else unsetenv(map_variable);
   char *arguments[] = {program, sys, NULL};

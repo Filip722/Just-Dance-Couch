@@ -1,0 +1,43 @@
+--- a/recomp/runtime/audio.c
++++ b/recomp/runtime/audio.c
+@@ -103,22 +103,30 @@
+   atomic_store_explicit(&written, position + count, memory_order_release);
+ }
+ 
+-// The output device's clock drifts from ours. Skipping or repeating one sample per
+-// request keeps the ring near its target, too slightly to hear.
++// Keep capture and playback clocks in step. Spread the one-sample correction
++// across the whole output period to avoid jumping to a different sample.
+ void audio_pull(int16_t *output, uint32_t samples) {
+   uint32_t position = atomic_load_explicit(&played, memory_order_relaxed);
+   uint32_t waiting = atomic_load_explicit(&written, memory_order_acquire) - position;
+   uint32_t done = 0;
+   if (refilling && waiting >= target) refilling = 0;
+   if (!refilling) {
+-    if (waiting > target + DRIFT_MARGIN) { position++; waiting--; }
+-    else if (waiting < target - DRIFT_MARGIN && waiting > 0) { position--; waiting++; }
+-    for (; done < samples && waiting; done++, waiting--, position++) {
+-      uint32_t at = position % RING_SAMPLES * AUDIO_CHANNELS;
+-      output[done * AUDIO_CHANNELS] = ring[at];
+-      output[done * AUDIO_CHANNELS + 1] = ring[at + 1];
+-    }
+-    atomic_store_explicit(&played, position, memory_order_release);
++    int adjustment = 0;
++    if (samples > 1 && waiting > samples && waiting > target + DRIFT_MARGIN) adjustment = 1;
++    if (samples > 1 && waiting >= samples && waiting < target - DRIFT_MARGIN) adjustment = -1;
++    for (; done < samples && done < waiting; done++) {
++      uint32_t at = (position + done) % RING_SAMPLES * AUDIO_CHANNELS;
++      for (int channel = 0; channel < AUDIO_CHANNELS; channel++) {
++        int value = ring[at + channel];
++        if (adjustment && done) {
++          uint32_t neighbor = (position + done + adjustment) % RING_SAMPLES * AUDIO_CHANNELS;
++          int difference = ring[neighbor + channel] - value;
++          value += difference * (int)done / (int)samples;
++        }
++        output[done * AUDIO_CHANNELS + channel] = value;
++      }
++    }
++    atomic_store_explicit(&played, position + done + adjustment, memory_order_release);
+   }
+   if (done < samples) {
+     if (!refilling && target < MAX_TARGET_SAMPLES) target += TARGET_STEP_SAMPLES;

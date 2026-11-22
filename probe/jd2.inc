@@ -78,21 +78,19 @@ static const Jd2Edition jd2_editions[] = {
 
 static const Jd2Edition *jd2_edition;
 static const Jd2SongSlot *jd2_song;
-static int jd2_request_read, jd2_catalog_ready, jd2_title_ready, jd2_map_seen, jd2_playing, jd2_recap_seen;
+static int jd2_catalog_ready, jd2_title_ready, jd2_map_seen, jd2_playing, jd2_recap_seen;
 static uint64_t jd2_menu_ready;
 
+static const Jd2Edition *jd2_title_edition(void) {
+  for (size_t i = 0; i < sizeof jd2_editions / sizeof *jd2_editions; i++)
+    if (jd2_editions[i].title_low == title->title_low) return &jd2_editions[i];
+  return NULL;
+}
+
 static const Jd2SongSlot *jd2_requested_song(void) {
-  if (jd2_request_read) return jd2_song;
-  jd2_request_read = 1;
-  const char *map = getenv("JD2_PROBE_MAP");
+  if (jd2_song) return jd2_song;
+  const char *map = legacy_boot_map("JD2_PROBE_MAP");
   if (!map) return NULL;
-  for (size_t i = 0; i < sizeof jd2_editions / sizeof *jd2_editions; i++) {
-    if (jd2_editions[i].title_low == title->title_low) {
-      jd2_edition = &jd2_editions[i];
-      break;
-    }
-  }
-  if (!jd2_edition) return NULL;
   char *end;
   unsigned long key = strtoul(map, &end, 16);
   for (size_t i = 0; map != end && !*end && i < jd2_edition->count; i++) {
@@ -106,9 +104,12 @@ static const Jd2SongSlot *jd2_requested_song(void) {
 }
 
 void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
-  if (jd2_catalog_ready || !jd2_requested_song() || bytes != jd2_edition->catalog_bytes) return;
+  if (jd2_catalog_ready) return;
+  if (!jd2_edition) jd2_edition = jd2_title_edition();
+  if (!jd2_edition || bytes != jd2_edition->catalog_bytes) return;
   // The first two words identify the original catalog's world record.
-  if (rd32(buffer) != 0x6a0e808cu || rd32(buffer + 4) != jd2_edition->catalog_signature) return;
+  if (rd32(buffer) != 0x6a0e808cu || rd32(buffer + 4) != jd2_edition->catalog_signature ||
+      !jd2_requested_song()) return;
   uint32_t first = buffer + jd2_edition->first_slot_offset;
   uint32_t selected = buffer + jd2_song->slot_offset;
   uint32_t first_slot = rd32(first), selected_slot = rd32(selected);
@@ -120,11 +121,11 @@ void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
   wr32(first, selected_slot);
   wr32(selected, first_slot);
   jd2_catalog_ready = 1;
-  if (jd_couch_library_ready) jd_couch_library_ready();
 }
 
 void jd2_probe_track(void) {
-  if (!jd2_requested_song() || jd2_recap_seen) return;
+  if ((!couch_booting() && !jd2_song && !getenv("JD2_PROBE_MAP")) || jd2_recap_seen) return;
+  if (!jd2_edition) jd2_edition = jd2_title_edition();
   const char *track = (const char *)host(cpu.r[3] + 8);
   if (!track) return;
   if (jd2_playing) {
@@ -184,6 +185,7 @@ void jd2_probe_map(void) {
       fprintf(stderr, "probe: %s selected %08x instead of %08x\n", jd2_edition->name, cpu.r[4], jd2_song->key);
       exit(2);
     }
+    time_boot_finish();
     jd2_map_seen = 1;
     fprintf(stderr, "probe: original map loader requested %08x\n", jd2_song->key);
     return;

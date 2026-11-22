@@ -99,6 +99,11 @@ def decode_dsp_clip(data, rate, coefficients, start):
                         i = sample_index - first
                         samples[i * 2 + channel] = previous
                     sample_index += 1
+    return fade_preview(samples, rate)
+
+
+def fade_preview(samples, rate):
+    length = len(samples) // 2
     fade = rate // 5
     for i in range(fade):
         for channel in range(2):

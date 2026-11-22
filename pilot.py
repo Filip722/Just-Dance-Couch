@@ -123,13 +123,15 @@ def prepare_archive(destination, archive_name, url, sha256, directory):
         (staging / directory).rename(destination)
 
 
-def apply_patch(folder, patch):
+def apply_patch(folder, patch, *, revert=False):
     command = ["patch", "-p1", "-i", str(patch)]
     applied = subprocess.run(
         [*command, "--force", "--reverse", "--dry-run"], cwd=folder,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    if applied.returncode:
+    if revert and not applied.returncode:
+        subprocess.run([*command, "--force", "--reverse"], cwd=folder, check=True)
+    elif not revert and applied.returncode:
         subprocess.run([*command, "--batch", "--forward"], cwd=folder, check=True)
 
 
@@ -137,6 +139,8 @@ def prepare_upstream():
     prepare_archive(UPSTREAM, "wii-recomp-55fb408.tar.gz",
                     f"https://codeload.github.com/Zontex/wii-recomp/tar.gz/{REVISION}",
                     ARCHIVE_SHA256, f"wii-recomp-{REVISION}")
+    # Upgrade runtime source caches that already contain the old audio correction.
+    apply_patch(UPSTREAM, ROOT / "patches/obsolete/audio-drift-crossfade.patch", revert=True)
     for patch in sorted((ROOT / "patches").glob("*.patch")):
         apply_patch(UPSTREAM, patch)
 

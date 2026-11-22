@@ -31,6 +31,8 @@ static const uint32_t SONG_GET_DESCRIPTOR = 0x800a2338u;
 static const uint32_t SPLASH_END_DISPLAYING = 0x8004e334u;
 
 extern const char *jd_couch_requested_map(void) __attribute__((weak));
+extern const char *jd_couch_wait_for_map(void) __attribute__((weak));
+extern void time_boot_finish(void);
 extern void jd_couch_library_ready(void) __attribute__((weak));
 extern int jd_couch_loading(void) __attribute__((weak));
 extern void jd_couch_gameplay_ready(void) __attribute__((weak));
@@ -229,7 +231,7 @@ static const UbiArtPort ubiart_ports[] = {
   {0x53453345, 0x6838caf6eb441eebull, 22160, 176, 412, 8, 22344,
    0x8023ae90, 0x80253160, 0x80254b2c, 0x800178ec, 0x8001784c,
    0x8022d39c, 0x8022d130, 0x80213560, 0x80126090,
-   0, 0x8007b1f4, {0x80183bc0, 0x80183f7c, 0x801843e0}},
+   0x801fab2c, 0x8007b1f4, {0x80183bc0, 0x80183f7c, 0x801843e0}},
   // Just Dance 2016 (SJNE41)
   {0x534a4e45, 0x982a35fc4bc22d63ull, 20664, 152, 0, 7, 20840,
    0x80550994, 0x8056bd04, 0x8056d6d0, 0x8000a448, 0x8000a3a8,
@@ -504,23 +506,34 @@ static unsigned jd1_key, jd1_step;
 static uint64_t jd1_lobby_ready;
 static char jd1_movie[48];
 
+static int couch_booting(void) {
+  return jd_couch_loading && jd_couch_loading();
+}
+
+static const char *legacy_boot_map(const char *variable) {
+  const char *map = getenv(variable);
+  if (map && jd_couch_library_ready) jd_couch_library_ready();
+  return map ? map : jd_couch_wait_for_map ? jd_couch_wait_for_map() : NULL;
+}
+
 int jd1_probe_direct(void) {
   if (title->title_low != SDNE41_TITLE_LOW || title->program_check != 0xf3890e503b9a273aull)
     return 0;
-  if (jd1_active) return 1;
-  const char *map = jd_couch_requested_map ? jd_couch_requested_map() : NULL;
-  if (!map) map = getenv("JD1_PROBE_MAP");
-  if (!map) return 0;
-  char *end;
-  unsigned long key = strtoul(map, &end, 10);
-  if (end == map || *end || key > UINT32_MAX) exit(2);
-  jd1_key = key;
-  jd1_active = 1;
-  return 1;
+  return couch_booting() || getenv("JD1_PROBE_MAP");
 }
 
 int jd1_probe_skip_song(void) {
-  if (!jd1_active) return 0;
+  if (!jd1_active) {
+    if (!jd1_probe_direct()) return 0;
+    // The database can be initialized once the picker has a song ID.
+    const char *map = legacy_boot_map("JD1_PROBE_MAP");
+    if (!map) return 0;
+    char *end;
+    unsigned long key = strtoul(map, &end, 10);
+    if (end == map || *end || key > UINT32_MAX) exit(2);
+    jd1_key = key;
+    jd1_active = 1;
+  }
   if (cpu.r[5] != jd1_key) return 1;
   snprintf(jd1_movie, sizeof jd1_movie, "%s", (const char *)host(cpu.r[9]));
   fprintf(stderr, "probe: original Just Dance selected %s (%u)\n", jd1_movie, jd1_key);
@@ -574,6 +587,7 @@ void jd1_probe_video_open(void) {
     fprintf(stderr, "probe: expected %s, original Just Dance opened %s\n", wide, path);
     exit(2);
   }
+  time_boot_finish();
   jd1_movie_seen = 1;
   fprintf(stderr, "probe: original Just Dance opened %s\n", path);
 }
@@ -588,8 +602,9 @@ void jd1_probe_flash_value(uint32_t name_address) {
   if (!jd1_step && !jd1_saved && !strcmp(name, "_root.bouton1_pressed")) {
     jd1_saved = 1;
     cpu.r[3] = 1;
-  } else if (jd1_step == 4 && !jd1_lobby_ready && !strcmp(name, "_root.PlayLong")) {
-    jd1_lobby_ready = time_base() / JD1_TICKS_PER_MS;
+  } else if (jd1_step == 4 && !jd1_movie_seen && !strcmp(name, "_root.PlayLong")) {
+    if (!jd1_lobby_ready) jd1_lobby_ready = time_base() / JD1_TICKS_PER_MS;
+    if (cpu.r[3] == 1) time_boot_finish();
   } else if (jd1_movie_seen && !jd1_score_seen && !strcmp(name, "_root.Score_Current")) {
     jd1_score_seen = 1;
     if (jd_couch_game_event) jd_couch_game_event(0);

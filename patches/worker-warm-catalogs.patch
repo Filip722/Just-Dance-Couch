@@ -1,0 +1,14 @@
+--- a/recomp/runtime/hardware.c
++++ b/recomp/runtime/hardware.c
+@@ -274,6 +274,11 @@
+ void reset_button_press(void) { atomic_store(&reset_pressed, 1); }
+ 
+ int power_button_press(void) {
++#ifdef __linux__
++  // A guest waiting at its catalog has no code running to answer a power press.
++  extern int jd_couch_boot_parked(void) __attribute__((weak));
++  if (jd_couch_boot_parked && jd_couch_boot_parked()) return 0;
++#endif
+   atomic_store(&power_pressed, 1);
+   return stm_listening();
+ }
