@@ -67,24 +67,29 @@ def decode_preview(data, start):
     stream, size = chunks[b"datS"]
     if channels != 2 or rate not in (32000, 48000) or stream + size > len(data):
         raise ValueError("Expected stereo Wii audio at 32 or 48 kHz")
+    coefficients = [
+        struct.unpack_from(">16h", data, chunks[k][0] + 28) for k in (b"dspL", b"dspR")
+    ]
+    return rate, decode_dsp_clip(memoryview(data)[stream:stream + size], rate, coefficients, start)
+
+
+def decode_dsp_clip(data, rate, coefficients, start):
     length = PREVIEW_SECONDS * rate
-    first = min(round(start * rate), size // 16 * 14 - length)
+    first = min(round(start * rate), len(data) // 16 * 14 - length)
     if first < 0:
         raise ValueError("Preview falls outside its Wii track")
     end = first + length
     samples = array("h", [0]) * (length * 2)
-    for channel, key in enumerate((b"dspL", b"dspR")):
-        coefficient_offset, _ = chunks[key]
-        coefficients = struct.unpack_from(">16h", data, coefficient_offset + 28)
+    for channel, channel_coefficients in enumerate(coefficients):
         previous = older = 0
         sample_index = 0
-        for offset in range(stream + channel * 8, stream + ((end + 13) // 14) * 16, 16):
+        for offset in range(channel * 8, ((end + 13) // 14) * 16, 16):
             header = data[offset]
             predictor = header >> 4
             if predictor >= 8:
                 raise ValueError("Invalid Wii ADPCM predictor")
             scale = 2048 << (header & 15)
-            first_coefficient, second_coefficient = coefficients[predictor * 2:predictor * 2 + 2]
+            first_coefficient, second_coefficient = channel_coefficients[predictor * 2:predictor * 2 + 2]
             for packed in data[offset + 1:offset + 8]:
                 for nibble in (packed >> 4, packed & 15):
                     signed = nibble if nibble < 8 else nibble - 16
@@ -102,7 +107,32 @@ def decode_preview(data, start):
                 samples[at] = round(samples[at] * i / fade)
     if sys.byteorder != "little":
         samples.byteswap()
-    return rate, samples
+    return samples
+
+
+def write_preview(key, destination, cue, rate, samples, video):
+    with tempfile.TemporaryDirectory(dir=destination) as staging:
+        staging = Path(staging)
+        wav = staging / "preview.wav"
+        with wave.open(str(wav), "wb") as output:
+            output.setparams((2, 2, rate, 0, "NONE", "not compressed"))
+            output.writeframes(samples)
+        if video:
+            source, rgb = staging / "coach", staging / "preview.rgb"
+            source.write_bytes(video)
+            args = [
+                "ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-ss", str(cue),
+                "-i", str(source), "-an", "-filter_threads", "1",
+                "-vf", f"fps={PREVIEW_FPS},scale={PREVIEW_WIDTH}:{PREVIEW_HEIGHT}",
+                "-frames:v", str(PREVIEW_SECONDS * PREVIEW_FPS), "-threads", "1",
+                "-pix_fmt", "rgb24", "-f", "rawvideo", str(rgb),
+            ]
+            result = subprocess.run(args, capture_output=True)
+            if result.returncode == 0 and rgb.stat().st_size == FRAME_BYTES * PREVIEW_FPS * PREVIEW_SECONDS:
+                rgb.replace(destination / f"{key}.rgb")
+            else:
+                print(f"preview: {key} has audio only", flush=True)
+        wav.replace(destination / f"{key}.wav")
 
 
 def render_preview(job, destination):
@@ -110,28 +140,7 @@ def render_preview(job, destination):
     try:
         cue = preview_cue(key, read_entry(track))
         rate, samples = decode_preview(read_entry(audio), cue)
-        with tempfile.TemporaryDirectory(dir=destination) as staging:
-            staging = Path(staging)
-            wav = staging / "preview.wav"
-            with wave.open(str(wav), "wb") as output:
-                output.setparams((2, 2, rate, 0, "NONE", "not compressed"))
-                output.writeframes(samples)
-            if video:
-                source, rgb = staging / "coach.webm", staging / "preview.rgb"
-                source.write_bytes(read_entry(video))
-                args = [
-                    "ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-ss", str(cue),
-                    "-i", str(source), "-an", "-filter_threads", "1",
-                    "-vf", f"fps={PREVIEW_FPS},scale={PREVIEW_WIDTH}:{PREVIEW_HEIGHT}",
-                    "-frames:v", str(PREVIEW_SECONDS * PREVIEW_FPS), "-threads", "1",
-                    "-pix_fmt", "rgb24", "-f", "rawvideo", str(rgb),
-                ]
-                result = subprocess.run(args, capture_output=True)
-                if result.returncode == 0 and rgb.stat().st_size == FRAME_BYTES * PREVIEW_FPS * PREVIEW_SECONDS:
-                    rgb.replace(destination / f"{key}.rgb")
-                else:
-                    print(f"preview: {key} has audio only", flush=True)
-            wav.replace(destination / f"{key}.wav")
+        write_preview(key, destination, cue, rate, samples, read_entry(video) if video else None)
     except (KeyError, ValueError, struct.error) as error:
         print(f"preview: {key}: {error}", flush=True)
 

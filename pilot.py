@@ -15,7 +15,8 @@ import tempfile
 from urllib.request import urlretrieve
 
 from probe.collection import EDITIONS, catalog, write_catalog
-from probe.instrument import fix_jd2_bigfile, fix_jd3_stream_wait, instrument
+from probe.instrument import fix_jd2_bigfile, instrument, instrument_jd3
+from probe.lyn_previews import JD3_SONGS, prepare_jd3_previews
 from probe.previews import prepare_previews
 
 
@@ -176,7 +177,7 @@ def build(disc_id, image, jobs):
     env = build_environment()
     disc = CACHE / "discs" / disc_id
     prepare_disc(disc, disc_id, image, env)
-    if disc_id in ("SJOE41", "SE3E41") or disc_id in EDITIONS:
+    if disc_id in EMBEDDED_TITLES:
         adapter = RUNTIME / "runtime/jd2014_probe.c"
         adapter_source = (ROOT / "probe/jd2014.c").read_bytes()
         if not adapter.exists() or adapter.read_bytes() != adapter_source:
@@ -191,7 +192,8 @@ def build(disc_id, image, jobs):
         if disc_id in ("SJOE41", "SE3E41") or disc_id in EDITIONS:
             instrument(title_build / "generated", disc_id)
         elif disc_id == "SJDE41":
-            fix_jd3_stream_wait(title_build / "generated")
+            instrument_jd3(title_build / "generated")
+            prepare_jd3_previews(disc, CACHE / "previews" / disc_id)
         elif (disc / "files/WD2.bbf").is_file() and not (disc / "files/WD2.bf").is_file():
             fix_jd2_bigfile(title_build / "generated")
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
@@ -222,9 +224,12 @@ def boot(disc_id, fresh, song):
     env.setdefault("WII_RECOMP_REMOTE_SLOTS", str(save_dir / "remotes.txt"))
     env.setdefault("WII_RECOMP_CONTROLLERS", str(save_dir / "controllers.ini"))
     if song:
-        if disc_id != "SJOE41":
-            raise ValueError("--song is available for the JD2014 probe")
-        env["JD2014_PROBE_MAP"] = song
+        if disc_id == "SJOE41" and song in ("GetLucky", "JustDance"):
+            env["JD2014_PROBE_MAP"] = song
+        elif disc_id == "SJDE41" and song in JD3_SONGS:
+            env["JD3_PROBE_MAP"] = song
+        else:
+            raise ValueError("Unknown song key for this native probe")
     os.chdir(STATE)
     os.execve(binary, [str(binary), str(disc / "sys")], env)
 
@@ -251,7 +256,7 @@ def build_couch(jobs):
         verify_disc(disc, disc_id)
         title_build = RUNTIME / f"build-{disc_id}"
         if disc_id == "SJDE41":
-            fix_jd3_stream_wait(title_build / "generated")
+            instrument_jd3(title_build / "generated")
         else:
             if disc_id in EDITIONS:
                 collection[disc_id] = songs = catalog(disc)
@@ -337,7 +342,7 @@ def main():
     couch = commands.add_parser("couch", help="link the built titles and the browser into one executable")
     couch.add_argument("--jobs", type=int, default=6)
     runner = commands.add_parser("boot", help="run a title in strict-native mode")
-    runner.add_argument("--song", choices=("GetLucky", "JustDance"), help="probe the direct-launch branch")
+    runner.add_argument("--song", help="probe a verified game and song key")
     runner.add_argument("--fresh", action="store_true", help="use a new isolated save directory")
     for command in (compiler, runner):
         command.add_argument("--disc", choices=DISCS, default="SJOE41", help="disc ID (default SJOE41)")

@@ -140,3 +140,69 @@ def fix_jd2_bigfile(directory):
             source.write_text(original.replace(JD2_OPEN_BIGFILE, JD2_BIGFILE_NAME + JD2_OPEN_BIGFILE))
             return
     raise ValueError("Missing JD2 BigFile open at 8000e554")
+
+# JD3 revision 1. The main executable's ViD startup flag enables the disc's
+# original compiled script module. The title hook runs after its normal setup.
+JD3_COMPILED_SCRIPTS_GATE = "cpu.r[0] = rd32((cpu.r[13] + -27936));"
+JD3_COMPILED_SCRIPTS_CALL = " if (1) { cpu.lr = 0x80014444u; f_8018b29c(); }"
+JD3_TRANSITIONS = {
+    "c00eb2d4": ("jd3_probe_title_ready", "uint32_t, uint32_t", "cpu.r[30], m0_code"),
+    "c0076f8c": ("jd3_probe_hud_entered", "void", ""),
+}
+JD3_HOOKS = {
+    "c01780a8": "jd3_probe_map",
+    "c00bbb10": "jd3_probe_lobby_entered",
+    "c00bdffc": "jd3_probe_lobby_update",
+    "c0058644": "jd3_probe_game_started",
+    "c01a57d4": "jd3_probe_score",
+    "c0155220": "jd3_probe_recap",
+}
+
+
+def instrument_jd3(directory):
+    fix_jd3_stream_wait(directory)
+    pending = JD3_HOOKS.copy()
+    transitions = JD3_TRANSITIONS.copy()
+    enabled = completion = False
+    for source in directory.glob("*.c"):
+        original = source.read_text()
+        modified = original
+        if JD3_COMPILED_SCRIPTS_CALL in original:
+            end = original.index(JD3_COMPILED_SCRIPTS_CALL)
+            gate = original.rindex(JD3_COMPILED_SCRIPTS_GATE, 0, end)
+            line = "  extern void jd3_probe_enable_compiled_scripts(void); jd3_probe_enable_compiled_scripts();\n"
+            if not original[:gate].endswith(line):
+                modified = original[:gate] + line + original[gate:]
+            enabled = True
+        for address, (name, parameters, arguments) in tuple(transitions.items()):
+            marker = f"void f_{address}(void)"
+            if marker not in modified:
+                continue
+            start = modified.index(marker)
+            end = modified.index("\n}", start)
+            hook = f"  extern void {name}({parameters}); {name}({arguments});\n"
+            if hook not in modified[start:end]:
+                tail = modified.rindex("cpu.r[0] = rd32s", start, end)
+                modified = modified[:tail] + hook + modified[tail:]
+            del transitions[address]
+        marker = "void f_c00bcb20(void) { POLL_COUNTED(3008);\n"
+        if marker in modified:
+            hook = ("  extern int jd3_probe_first_lobby_completion(void);"
+                    " if (!jd3_probe_first_lobby_completion()) return;\n")
+            after = modified.index(marker) + len(marker)
+            if not modified.startswith(hook, after):
+                modified = modified[:after] + hook + modified[after:]
+            completion = True
+        for address, hook in tuple(pending.items()):
+            match = re.search(rf"(?m)^void f_{address}\(void\) \{{ POLL(?:_COUNTED)?\(\d*\);\n", modified)
+            if match:
+                line = f"  extern void {hook}(void); {hook}();\n"
+                after = match.end()
+                if not modified.startswith(line, after):
+                    modified = modified[:after] + line + modified[after:]
+                del pending[address]
+        if modified != original:
+            source.write_text(modified)
+    if pending or transitions or not enabled or not completion:
+        missing = ", ".join(pending | transitions)
+        raise ValueError(f"Missing JD3 instrumentation: startup={enabled}, completion={completion}, hooks={missing}")

@@ -378,3 +378,106 @@ int jd2015_probe_skip_lobby_howto(void) {
   // state that no popup opened, so it can finish its normal setup immediately.
   return jd2015_probe_controller_prompt() && cpu.lr == active_port->lobby_howto_caller;
 }
+
+
+// Just Dance 3 revision 1 ships these scripts as an optional native RSO.
+enum {
+  SJDE41_TITLE_LOW = 0x534a4445,
+  JD3_COMPILED_SCRIPTS_SDA_OFFSET = 27936,
+  JD3_FIND_MAP = 0x1773fc,
+  JD3_LAUNCH_MAP = 0x1ba6e8,
+  JD3_LOBBY_READY = 0x0bcce0,
+  JD3_LOBBY_CONTINUE = 0x0bce64,
+  JD3_LOBBY_END_MENU_CHANGE = 0x0bcb20,
+};
+
+static uint32_t jd3_code, jd3_key, jd3_lobby;
+static int jd3_map_confirmed, jd3_continued, jd3_lobby_complete, jd3_scoring;
+
+void jd3_probe_enable_compiled_scripts(void) {
+  if (title->title_low != SJDE41_TITLE_LOW || title->program_check != 0x3f798cb17a63269dull)
+    return;
+  requested_map = getenv("JD3_PROBE_MAP");
+  if (requested_map) wr32(cpu.r[13] - JD3_COMPILED_SCRIPTS_SDA_OFFSET, 1);
+}
+
+void jd3_probe_title_ready(uint32_t page, uint32_t code) {
+  if (!requested_map || jd3_key) return;
+  jd3_code = code;
+
+  char *end;
+  unsigned long key = strtoul(requested_map, &end, 16);
+  if (!key || key > UINT32_MAX || *end) exit(2);
+  Cpu saved = cpu;
+  cpu.r[5] = key;
+  dispatch(jd3_code + JD3_FIND_MAP);
+  int found = (int32_t)cpu.r[3] >= 0;
+  cpu = saved;
+  if (!found) {
+    fprintf(stderr, "probe: %s missing from the original JD3 song database\n", requested_map);
+    exit(2);
+  }
+
+  // LaunchMap reads the first word of its stock argument as the map key.
+  // The title page and menu actions share the same script context.
+  jd3_key = key;
+  uint32_t stock = saved.r[1] - 160;
+  wr32(stock, jd3_key);
+  wr32(stock - 32, saved.r[1]);
+  cpu.r[1] = stock - 32;
+  cpu.r[3] = page;
+  cpu.r[4] = stock;
+  dispatch(jd3_code + JD3_LAUNCH_MAP);
+  cpu = saved;
+}
+
+void jd3_probe_map(void) {
+  if (!jd3_key || jd3_map_confirmed) return;
+  if (cpu.r[5] != jd3_key) {
+    fprintf(stderr, "probe: JD3 loader selected a different map than %s\n", requested_map);
+    exit(2);
+  }
+  jd3_map_confirmed = 1;
+  fprintf(stderr, "probe: original map loader requested %s\n", requested_map);
+}
+
+void jd3_probe_lobby_entered(void) {
+  if (jd3_map_confirmed) jd3_lobby = cpu.r[3];
+}
+
+void jd3_probe_lobby_update(void) {
+  if (!jd3_lobby || cpu.r[3] != jd3_lobby || jd3_continued) return;
+  if (!guest_call(jd3_code + JD3_LOBBY_READY, jd3_lobby)) return;
+  jd3_continued = guest_call(jd3_code + JD3_LOBBY_CONTINUE, jd3_lobby);
+  if (jd3_continued) fprintf(stderr, "probe: selected the original JD3 lobby Continue action\n");
+}
+
+int jd3_probe_first_lobby_completion(void) {
+  if (!jd3_continued || cpu.r[3] != jd3_lobby) return 1;
+  if (jd3_lobby_complete) return 0;
+  jd3_lobby_complete = 1;
+  return 1;
+}
+
+void jd3_probe_hud_entered(void) {
+  if (!jd3_continued || jd3_lobby_complete) return;
+  // The direct path has prepared the dance and entered the HUD. Complete the
+  // lobby transition through its original callback, which starts phase six.
+  guest_call(jd3_code + JD3_LOBBY_END_MENU_CHANGE, jd3_lobby);
+}
+
+void jd3_probe_game_started(void) {
+  if (!jd3_lobby_complete) return;
+  fprintf(stderr, "probe: original JD3 gameplay started\n");
+}
+
+void jd3_probe_score(void) {
+  if (!jd3_lobby_complete || jd3_scoring) return;
+  jd3_scoring = 1;
+  fprintf(stderr, "probe: original JD3 gameplay emitted its first move score %.6f\n", cpu.f[1]);
+}
+
+void jd3_probe_recap(void) {
+  if (!jd3_scoring) return;
+  fprintf(stderr, "probe: original JD3 scoreboard entered\n");
+}
