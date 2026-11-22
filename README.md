@@ -4,14 +4,15 @@ A native Linux x86-64 launcher for locally owned Just Dance Wii backups. It buil
 
 ## Current state
 
-- The fullscreen picker opens on **Just Dance 2014** and includes **Just Dance 2014–2019** and the original **Just Dance**. Each edition has an alphabetical five-column grid with three visible rows. Press Right at the end of a row or Left at the start of a row to change editions. A tile shows a still from its locally cached coach video and shows the clip when highlighted. The 2014–2019 previews also play music. The launcher warms the newer edition you are browsing.
+- The fullscreen picker opens on **Just Dance 2014** and includes **Just Dance 2014–2019**, the original **Just Dance**, and **Just Dance 2**. Each edition has an alphabetical five-column grid with three visible rows. Press Right at the end of a row or Left at the start of a row to change editions. A tile shows a still from its locally cached coach video and shows the clip when highlighted. The 2014–2019 and Just Dance 2 previews also play music. The launcher warms the newer edition you are browsing.
 - **Just Dance 2014 (USA)** launches all 48 listed routines from the original game. Loopback tests verified scoring in **Just Dance**, **Get Lucky**, and **#thatPOWER**, the **Get Lucky** recap, and return to the selected row after completion and cancellation.
 - **Just Dance 2015 (USA)** launches all 42 listed routines from the original game. The launcher starts the 2015 worker when you open its page and keeps the boot and lobby screens hidden. Loopback tests verified scoring in **4x4** and **Happy**, cancellation from **4x4**, and return to the picker after the **Happy** recap.
 - **Just Dance 3 (USA, revision 1)** has a native command-line probe for **Pump It** and **Take On Me**, with local audio and coach previews for both. Both songs reached the game’s move-scoring callback. The direct path still renders a black gameplay window, so JD3 is available as a diagnostic.
 - **Direct USB Wii Remote mode** claims and releases the Nintendo Wii Bluetooth module. Red SYNC pairing, handoff to Player 1, and motion scoring are verified with a physical Wii Remote in Just Dance 2014. A button wake and reconnect were confirmed after restarting the launcher.
 - **Just Dance 2016–2019 (USA)** add 177 Classic disc routines with locally cached previews. Each edition launches its original game directly into the selected dance. Loopback tests reached scoring on **No Control**, **Cheap Thrills**, **24K Magic**, and **Familiar**. Dismissing Familiar’s original recap returned to its selected tile.
 - **Just Dance (USA)** follows 2019 in the picker. All 32 tiles have local coach video and launch the matching original routine. The software checks recorded scoring and the original recap. Some test runs reached the recap early. The original edition starts a fresh worker after you select a song because its database needs the selection during startup.
-- All 17 Wii disc revisions were verified and compiled locally. Just Dance 2, 3, 4, Greatest Hits, and Summer Party still need a complete direct launch from the picker. Kids and Disney Party editions are outside this pass.
+- **Just Dance 2 (USA)** has 47 alphabetical tiles with local coach and music previews. The original game launched Cosmic Girl, Rasputin, and Jai Ho from their native keys. Cosmic Girl reached motion scoring. Cancelling Cosmic Girl and Jai Ho returned to their tiles. The cold fullscreen launches took 41–42 seconds in loopback.
+- All 17 Wii disc revisions were verified and compiled locally. Just Dance 3, 4, Greatest Hits, and Summer Party still need a complete direct launch from the picker. Kids and Disney Party editions are outside this pass.
 
 The repository contains the launcher, build scripts, runtime patches, and documentation. Use your own disc backups to build locally. Extracted data, generated title code, saves, binaries, and traces stay in the local cache and data directories.
 
@@ -20,7 +21,7 @@ The repository contains the launcher, build scripts, runtime patches, and docume
 The build uses Python 3.12 or newer, Clang, CMake, Ninja, pkg-config, FFmpeg, GNU binutils and patch, and the GLFW, SDL3, Vulkan, shaderc, ALSA, Fontconfig, FreeType and libusb-1.0 development libraries. Wii Recomp and the fallback nodtool download are pinned. On this host the cache supplies the `clang-19` shim, the verified nodtool, and Debian development packages staged under `deps/usr`. The build accepts system dependencies on other machines. [Wii Recomp source and requirements](https://github.com/Zontex/wii-recomp/tree/55fb408eb1f2df75e914524dc092e69c70739ded)
 
 ```bash
-for disc in SJOE41 SE3E41 SJNE41 SZ7E41 SE8E41 S5EE41 SJDE41 SDNE41; do
+for disc in SJOE41 SE3E41 SJNE41 SZ7E41 SE8E41 S5EE41 SJDE41 SDNE41 SD2Y41; do
   python3 -B pilot.py build --disc "$disc"
 done
 python3 -B pilot.py couch
@@ -28,7 +29,7 @@ couch="${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/bin/just-dance-couch"
 "$couch" --usb-wii
 ```
 
-The build reads `/mnt/synology/Games/wii/` by default. Pass `build --image /path/to/owned.rvz` to use a copy of the same verified revision. Derived data and build artifacts live in `${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/`. Isolated saves and controller state live in `${XDG_DATA_HOME:-$HOME/.local/share}/just-dance-couch/`. The app reads extracted disc data externally. The original Just Dance and 2014–2019 title registries and the JD3 diagnostic registry are linked into the executable. The worker uses `WII_RECOMP_NATIVE_ONLY=1` and the executable has zero Dolphin dependencies.
+The build reads `/mnt/synology/Games/wii/` by default. Pass `build --image /path/to/owned.rvz` to use a copy of the same verified revision. Derived data and build artifacts live in `${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/`. Isolated saves and controller state live in `${XDG_DATA_HOME:-$HOME/.local/share}/just-dance-couch/`. The app reads extracted disc data externally. The original Just Dance, Just Dance 2, and 2014–2019 title registries and the JD3 diagnostic registry are linked into the executable. The worker uses `WII_RECOMP_NATIVE_ONLY=1` and the executable has zero Dolphin dependencies.
 
 Game windows enter fullscreen during the handoff from the picker. Each launcher session writes detailed game output to `${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/game-<launcher-pid>.log`. Set `JUST_DANCE_GAME_TRACE=1` to print that trace in the terminal.
 
@@ -63,7 +64,7 @@ python3 -B pilot.py boot --fresh --song GetLucky
 python3 -B pilot.py boot --fresh --song JustDance
 python3 -B pilot.py boot --fresh --disc SDNE41 --song 18       # DARE
 python3 -B pilot.py build --disc SD2Y41
-python3 -B pilot.py boot --fresh --disc SD2Y41
+python3 -B pilot.py boot --fresh --disc SD2Y41 --song 908020bd  # Cosmic Girl
 python3 -B pilot.py boot --fresh --disc SJDE41 --song 2dc0bf8b  # Take On Me
 python3 -B pilot.py boot --fresh --disc SJDE41 --song 2dc0e3f1  # Pump It
 python3 -B pilot.py build --disc SZ7E41
@@ -78,7 +79,7 @@ The JD3 song probe enables the compiled script module shipped on the disc. It lo
 
 The original Just Dance probe uses the game’s Quick Play, Regular, one-round and Full version actions. It verifies the movie path before showing gameplay. All 32 native selections opened the matching coach video in loopback tests. The cold DARE launch reached fullscreen in about 19–20 seconds with software Vulkan. One complete run reached its original recap after 226.6 seconds of gameplay and returned to the DARE tile on Enter. Escape during Acceptable in the 80s returned to its tile. Traces and captures are under `probe/legacy-editions/SDNE41/` in the local cache.
 
-The Just Dance 2 build checks for an already completed DVD request before suspending the streaming thread. The Just Dance 2 and Summer Party builds also preserve the original packed vertex coordinates during loading. This cleared the horizontal distortion in loopback captures for Cosmic Girl and Pon De Replay. An isolated Just Dance 2 probe selected Cosmic Girl through the original catalog and opened its matching title card, music, and coach stream. An isolated Summer Party probe reached Firework through the original controls. Traces and captures are under `probe/legacy-editions/`.
+The Just Dance 2 build checks for an already completed DVD request before suspending the streaming thread. The Just Dance 2 and Summer Party builds also preserve the original packed vertex coordinates during loading. This cleared the horizontal distortion in loopback captures for Cosmic Girl and Pon De Replay. The Just Dance 2 worker puts the requested song in the first original carousel slot during catalog loading. It confirms the chosen key before revealing the fullscreen game. Loopback tests reached scoring on Cosmic Girl, and Escape returned to the same tile. An isolated Summer Party probe reached Firework through the original controls. Traces and captures are under `probe/legacy-editions/`.
 
 An isolated JD4 trace reached the original song catalog after enabling the corresponding compiled module. A later selected-song attempt stopped at an untranslated indirect call. Traces are in `probe/legacy-launch/SJXE41/`.
 
@@ -95,7 +96,7 @@ All 17 backups produced video under the planning reference run and were compiled
 | Disc | ID | Routine metadata | Native milestone | Selected dance | Physical pass |
 | --- | --- | --- | --- | --- | --- |
 | Just Dance | SDNE41 | 32 original song IDs and cached coach videos | Direct launch, scoring and original recap with loopback. Some software runs reached the recap early. | DARE | Pending |
-| Just Dance 2 | SD2Y41 | `LynWiiRetail.MAP` and `.sel` present | Native stock gameplay after fixing stream waits and packed vertex loading | Cosmic Girl in an isolated catalog probe | Pending |
+| Just Dance 2 | SD2Y41 | `LynWiiRetail.MAP` and `.sel` present | 47 local songs with coach and music previews. Original launch, scoring and picker cancellation checked. | Cosmic Girl, Rasputin | Pending |
 | Just Dance 3 | SJDE41 r1 | 73 descriptors in planning, including variants. Take On Me uses `0x2dc0bf8b`. | 32,288 main and 7,923 module functions built. The command-line song probe enables the original compiled scripts. | Pump It renders via the stock menu. Direct selection reaches scoring with a black window. | Pending |
 | Just Dance 4 | SJXE41 | `LynWiiRetail.elf` load bytes match the boot DOL. `.sel` present. | Native compiled scripts populate the song catalog in an isolated trace. | Pending | Pending |
 | Just Dance 2014 | SJOE41 | 80 descriptor paths. All 48 picker songs resolve in the original Classic database. | 44,819 main functions. Original solo scoring and Get Lucky recap verified in strict-native mode. | Just Dance, Get Lucky, and #thatPOWER | Just Dance scoring |

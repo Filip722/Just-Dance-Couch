@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 from urllib.request import urlretrieve
 
-from probe import jd1
+from probe import jd1, jd2
 from probe.collection import EDITIONS, catalog, write_catalog
 from probe.instrument import (
     LYN_VERTEX_COPY_SITES, fix_jd2_bigfile, fix_lyn_stream_wait, instrument, instrument_jd3,
@@ -51,6 +51,7 @@ EMBEDDED_TITLES = {
     "SJOE41": "jd2014_title", "SE3E41": "jd2015_title", "SJDE41": "jd3_title",
     **{disc: f"title_{disc}" for disc in EDITIONS},
     "SDNE41": "jd1_title",
+    "SD2Y41": "jd2_title",
 }
 BACKUPS = Path("/mnt/synology/Games/wii")
 
@@ -176,16 +177,23 @@ def prepare_disc(disc, disc_id, image, env):
         extracted.rename(disc)
 
 
+def prepare_probe_adapter():
+    folder = ROOT / "probe"
+    adapter = RUNTIME / "runtime/jd2014_probe.c"
+    slots = "\n".join(f"  {{0x{key}u, {offset}, {index}}},"
+                      for key, _, _, _, index, offset in jd2.SONGS)
+    content = (folder / "jd2014.c").read_text() + "\n" + (folder / "jd2.inc").read_text().replace("JD2_SONG_SLOTS", slots)
+    if not adapter.exists() or adapter.read_text() != content:
+        adapter.write_text(content)
+
+
 def build(disc_id, image, jobs):
     prepare_upstream()
     env = build_environment()
     disc = CACHE / "discs" / disc_id
     prepare_disc(disc, disc_id, image, env)
     if disc_id in EMBEDDED_TITLES:
-        adapter = RUNTIME / "runtime/jd2014_probe.c"
-        adapter_source = (ROOT / "probe/jd2014.c").read_bytes()
-        if not adapter.exists() or adapter.read_bytes() != adapter_source:
-            adapter.write_bytes(adapter_source)
+        prepare_probe_adapter()
     subprocess.run(
         [sys.executable, str(RUNTIME / "tools/add_game.py"), str(disc),
          "--no-pack", "--jobs", str(jobs), "--fifo-breakpoints"],
@@ -235,6 +243,8 @@ def boot(disc_id, fresh, song):
             env["JD2014_PROBE_MAP"] = song
         elif disc_id == "SDNE41" and any(key == song for key, _, _, _ in jd1.SONGS):
             env["JD1_PROBE_MAP"] = song
+        elif disc_id == "SD2Y41" and any(key == song for key, *_ in jd2.SONGS):
+            env["JD2_PROBE_MAP"] = song
         elif disc_id == "SJDE41" and song in JD3_SONGS:
             env["JD3_PROBE_MAP"] = song
         else:
@@ -255,13 +265,10 @@ def link_command(folder, target, env):
 def build_couch(jobs):
     prepare_upstream()
     env = build_environment()
-    adapter = RUNTIME / "runtime/jd2014_probe.c"
     for disc_id in EMBEDDED_TITLES:
         if not (RUNTIME / f"build-{disc_id}/title.so").is_file():
             raise ValueError(f"Run python3 pilot.py build --disc {disc_id} first")
-    adapter_source = (ROOT / "probe/jd2014.c").read_bytes()
-    if not adapter.exists() or adapter.read_bytes() != adapter_source:
-        adapter.write_bytes(adapter_source)
+    prepare_probe_adapter()
 
     collection = {}
     for disc_id in EMBEDDED_TITLES:
@@ -273,6 +280,10 @@ def build_couch(jobs):
         elif disc_id == "SDNE41":
             collection[disc_id] = "Just Dance", jd1.catalog()
             jd1.prepare_previews(disc, CACHE / "previews" / disc_id)
+            instrument(title_build / "generated", disc_id)
+        elif disc_id == "SD2Y41":
+            collection[disc_id] = "Just Dance 2", jd2.catalog()
+            jd2.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
             instrument(title_build / "generated", disc_id)
         else:
             if disc_id in EDITIONS:

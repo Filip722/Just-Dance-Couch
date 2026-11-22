@@ -99,6 +99,10 @@ static void find_remote(Browser *browser) {
   closedir(devices);
 }
 
+static int needs_song_at_boot(const char *disc) {
+  return !strcmp(disc, "SDNE41") || !strcmp(disc, "SD2Y41");
+}
+
 static int start_worker(Browser *browser, const char *map) {
   const char *disc = editions[browser->edition].disc;
   int sockets[2];
@@ -112,7 +116,7 @@ static int start_worker(Browser *browser, const char *map) {
     error = posix_spawn_file_actions_adddup2(&actions, sockets[1], WORKER_SOCKET);
     char socket_number[12];
     snprintf(socket_number, sizeof socket_number, "%d", WORKER_SOCKET);
-    const char *boot_map = map && !strcmp(disc, "SDNE41") ? map : "-";
+    const char *boot_map = map && needs_song_at_boot(disc) ? map : "-";
     char *arguments[] = {browser->program, "--worker", (char *)disc, (char *)boot_map,
                          socket_number, browser->loopback ? "loopback" : "remote", NULL};
     if (!error) error = posix_spawn(&browser->worker, browser->program, &actions, NULL, arguments, environ);
@@ -404,7 +408,7 @@ int main(int count, char **arguments) {
     if (!quit && !browser.worker && browser.warm_next) {
       browser.warm_next = 0;
       // Just Dance selects the song while its database is being populated.
-      if (strcmp(editions[browser.edition].disc, "SDNE41")) start_worker(&browser, NULL);
+      if (!needs_song_at_boot(editions[browser.edition].disc)) start_worker(&browser, NULL);
     }
     if (!browser.playing) paint(&browser);
   }

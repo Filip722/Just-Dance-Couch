@@ -1,5 +1,7 @@
 """Read the local Just Dance 3 coach and audio streams from LyN archives."""
 
+from concurrent.futures import ProcessPoolExecutor
+from itertools import repeat
 import struct
 
 from probe.previews import decode_dsp_clip, read_entry, write_preview
@@ -58,21 +60,33 @@ def audio_clip(audio):
     return cue, rate, samples
 
 
-def prepare_jd3_previews(disc, destination):
-    pending = {key: stem for key, stem in JD3_SONGS.items()
+def prepare_preview(key, destination, audio, video, media):
+    cue, rate, samples = audio_clip(raw_stream(audio, media))
+    movie = raw_stream(video, media)
+    if not movie.startswith(b"BIK"):
+        raise ValueError(f"Expected a Bink coach video for {key}")
+    write_preview(key, destination, cue, rate, samples, movie)
+
+
+def prepare_lyn_previews(disc, destination, songs, archive, jobs):
+    pending = {key: names for key, names in songs.items()
                if not ((destination / f"{key}.wav").is_file() and (destination / f"{key}.rgb").is_file())}
     if not pending:
         return
     destination.mkdir(parents=True, exist_ok=True)
     files = disc / "files"
-    aliases = dict(entries(files / "JD3.bf"))
-    media = dict(entries(files / "JD3.wii.wav.bf"))
-    for video in sorted(files.glob("JD3.wii.bik.bf*")):
+    family = archive.split(".", 1)[0]
+    aliases = dict(entries(files / archive))
+    media = dict(entries(files / f"{family}.wii.wav.bf"))
+    for video in sorted(files.glob(f"{family}.wii.bik.bf*")):
         media.update(entries(video))
-    for key, stem in pending.items():
-        basename = stem.lower().encode("ascii")
-        cue, rate, samples = audio_clip(raw_stream(aliases[basename + b".wav"], media))
-        video = raw_stream(aliases[basename + b".bik"], media)
-        if not video.startswith(b"BIK"):
-            raise ValueError(f"Expected a Bink coach video for {stem}")
-        write_preview(key, destination, cue, rate, samples, video)
+    audio, video = zip(*(tuple(aliases[name.lower().encode("ascii")] for name in names)
+                         for names in pending.values()))
+    with ProcessPoolExecutor(max_workers=jobs) as work:
+        for _ in work.map(prepare_preview, pending, repeat(destination), audio, video, repeat(media)):
+            pass
+
+
+def prepare_jd3_previews(disc, destination):
+    songs = {key: (f"{stem}.wav", f"{stem}.bik") for key, stem in JD3_SONGS.items()}
+    prepare_lyn_previews(disc, destination, songs, "JD3.bf", 1)
