@@ -1,24 +1,50 @@
-// Just Dance 2 uses the original catalog order to choose its first song.
+// Both games choose the first song in their original catalog order.
 enum {
-  JD2_CATALOG_BYTES = 80402,
-  JD2_FIRST_SLOT_OFFSET = 37411,
-  JD2_INPUT_CALLER = 0x80030048,
-  JD2_LOAD_GROUP_CALLER = 0x80144d74,
+  JD2_TITLE_LOW = 0x53443259,
+  SUMMER_TITLE_LOW = 0x534a3945,
   JD2_KPAD_STATUS_BYTES = 240,
   JD2_KPAD_MAX_SAMPLES = 16,
   JD2_MENU_SETTLE_MS = 2000,
 };
 
 typedef struct {
-  uint32_t key, index_offset;
-  uint8_t index;
+  uint32_t key, slot_offset, slot;
 } Jd2SongSlot;
 
 // Generated from the verified USA catalog in probe/jd2.py.
 static const Jd2SongSlot jd2_song_slots[] = {
 JD2_SONG_SLOTS
 };
+static const Jd2SongSlot summer_song_slots[] = {
+SUMMER_SONG_SLOTS
+};
 
+typedef struct {
+  const char *name;
+  uint32_t title_low, catalog_bytes, catalog_signature, first_slot_offset, first_slot;
+  uint32_t input_caller, load_group_caller;
+  const Jd2SongSlot *slots;
+  size_t count;
+} Jd2Edition;
+
+static const Jd2Edition jd2_editions[] = {
+  {
+    .name = "Just Dance 2", .title_low = JD2_TITLE_LOW,
+    .catalog_bytes = 80402, .catalog_signature = 0x02050000u,
+    .first_slot_offset = 37411, .first_slot = 1,
+    .input_caller = 0x80030048u, .load_group_caller = 0x80144d74u,
+    .slots = jd2_song_slots, .count = sizeof jd2_song_slots / sizeof *jd2_song_slots,
+  },
+  {
+    .name = "Just Dance Summer Party", .title_low = SUMMER_TITLE_LOW,
+    .catalog_bytes = 33732, .catalog_signature = 0xca030000u,
+    .first_slot_offset = 702, .first_slot = 0x0f304892u,
+    .input_caller = 0x8002305cu, .load_group_caller = 0x801236ecu,
+    .slots = summer_song_slots, .count = sizeof summer_song_slots / sizeof *summer_song_slots,
+  },
+};
+
+static const Jd2Edition *jd2_edition;
 static const Jd2SongSlot *jd2_song;
 static int jd2_request_read, jd2_catalog_ready, jd2_title_ready, jd2_map_seen, jd2_playing, jd2_recap_seen;
 static uint64_t jd2_menu_ready;
@@ -28,31 +54,39 @@ static const Jd2SongSlot *jd2_requested_song(void) {
   jd2_request_read = 1;
   const char *map = getenv("JD2_PROBE_MAP");
   if (!map) return NULL;
+  for (size_t i = 0; i < sizeof jd2_editions / sizeof *jd2_editions; i++) {
+    if (jd2_editions[i].title_low == title->title_low) {
+      jd2_edition = &jd2_editions[i];
+      break;
+    }
+  }
+  if (!jd2_edition) return NULL;
   char *end;
   unsigned long key = strtoul(map, &end, 16);
-  for (size_t i = 0; !*end && i < sizeof jd2_song_slots / sizeof *jd2_song_slots; i++) {
-    if (jd2_song_slots[i].key == key) {
-      jd2_song = &jd2_song_slots[i];
+  for (size_t i = 0; map != end && !*end && i < jd2_edition->count; i++) {
+    if (jd2_edition->slots[i].key == key) {
+      jd2_song = &jd2_edition->slots[i];
       return jd2_song;
     }
   }
-  fprintf(stderr, "probe: unknown Just Dance 2 song %s\n", map);
+  fprintf(stderr, "probe: unknown %s song %s\n", jd2_edition->name, map);
   exit(2);
 }
 
 void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
-  if (bytes != JD2_CATALOG_BYTES || jd2_catalog_ready || !jd2_requested_song()) return;
+  if (jd2_catalog_ready || !jd2_requested_song() || bytes != jd2_edition->catalog_bytes) return;
   // The first two words identify the original catalog's world record.
-  if (rd32(buffer) != 0x6a0e808cu || rd32(buffer + 4) != 0x02050000u) return;
-  uint32_t first = buffer + JD2_FIRST_SLOT_OFFSET;
-  uint32_t selected = buffer + jd2_song->index_offset;
-  uint32_t first_index = rd32(first), selected_index = rd32(selected);
-  if (first_index != __builtin_bswap32(1) || selected_index != __builtin_bswap32(jd2_song->index)) {
-    fprintf(stderr, "probe: unexpected Just Dance 2 catalog for %08x\n", jd2_song->key);
+  if (rd32(buffer) != 0x6a0e808cu || rd32(buffer + 4) != jd2_edition->catalog_signature) return;
+  uint32_t first = buffer + jd2_edition->first_slot_offset;
+  uint32_t selected = buffer + jd2_song->slot_offset;
+  uint32_t first_slot = rd32(first), selected_slot = rd32(selected);
+  if (first_slot != __builtin_bswap32(jd2_edition->first_slot) ||
+      selected_slot != __builtin_bswap32(jd2_song->slot)) {
+    fprintf(stderr, "probe: unexpected %s catalog for %08x\n", jd2_edition->name, jd2_song->key);
     exit(2);
   }
-  wr32(first, selected_index);
-  wr32(selected, first_index);
+  wr32(first, selected_slot);
+  wr32(selected, first_slot);
   jd2_catalog_ready = 1;
   if (jd_couch_library_ready) jd_couch_library_ready();
 }
@@ -64,7 +98,7 @@ void jd2_probe_track(void) {
   if (jd2_playing) {
     if (!strcmp(track, "WD2_LevelManager_trk_ScoreBoard")) {
       jd2_recap_seen = 1;
-      fprintf(stderr, "probe: original Just Dance 2 recap entered\n");
+      fprintf(stderr, "probe: original %s recap entered\n", jd2_edition->name);
       if (jd_couch_game_event) jd_couch_game_event(1);
     }
     return;
@@ -72,24 +106,24 @@ void jd2_probe_track(void) {
   if (!jd2_title_ready && !strcmp(track, "Universe_trk_Run")) jd2_title_ready = 1;
   if (!jd2_menu_ready && !strcmp(track, "WD2_MenuOut_trk_RefreshCoverflow")) {
     if (!jd2_catalog_ready) {
-      fprintf(stderr, "probe: the Just Dance 2 catalog could not be prepared\n");
+      fprintf(stderr, "probe: the %s catalog could not be prepared\n", jd2_edition->name);
       exit(2);
     }
     jd2_menu_ready = time_base();
   }
   if (!strcmp(track, "WD2_LevelManager_trk_GameLoop")) {
     if (!jd2_map_seen) {
-      fprintf(stderr, "probe: the Just Dance 2 loader did not confirm the selected song\n");
+      fprintf(stderr, "probe: the %s loader did not confirm the selected song\n", jd2_edition->name);
       exit(2);
     }
     jd2_playing = 1;
-    fprintf(stderr, "probe: original Just Dance 2 gameplay started\n");
+    fprintf(stderr, "probe: original %s gameplay started\n", jd2_edition->name);
     if (jd_couch_gameplay_ready) jd_couch_gameplay_ready();
   }
 }
 
 void jd2_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_t count) {
-  if (caller != JD2_INPUT_CALLER || channel || !count || !jd2_title_ready || jd2_playing) return;
+  if (channel || !count || !jd2_title_ready || jd2_playing || caller != jd2_edition->input_caller) return;
   uint64_t now = time_base();
   int menu = jd2_menu_ready && now - jd2_menu_ready >= (uint64_t)JD2_MENU_SETTLE_MS * JD1_TICKS_PER_MS;
   uint64_t milliseconds = now / JD1_TICKS_PER_MS;
@@ -111,11 +145,11 @@ void jd2_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_
 }
 
 void jd2_probe_map(void) {
-  if (!jd2_catalog_ready || jd2_map_seen || cpu.lr != JD2_LOAD_GROUP_CALLER) return;
-  for (size_t i = 0; i < sizeof jd2_song_slots / sizeof *jd2_song_slots; i++) {
-    if (jd2_song_slots[i].key != cpu.r[4]) continue;
+  if (!jd2_catalog_ready || jd2_map_seen || cpu.lr != jd2_edition->load_group_caller) return;
+  for (size_t i = 0; i < jd2_edition->count; i++) {
+    if (jd2_edition->slots[i].key != cpu.r[4]) continue;
     if (cpu.r[4] != jd2_song->key) {
-      fprintf(stderr, "probe: Just Dance 2 selected %08x instead of %08x\n", cpu.r[4], jd2_song->key);
+      fprintf(stderr, "probe: %s selected %08x instead of %08x\n", jd2_edition->name, cpu.r[4], jd2_song->key);
       exit(2);
     }
     jd2_map_seen = 1;

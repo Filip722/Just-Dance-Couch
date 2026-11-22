@@ -97,35 +97,36 @@ JD1_SITES = {
 LYN_VERTEX_COPY_SITES = {"SD2Y41": ("80036a18", 0), "SJ9E41": ("80029430", 1)}
 
 
-JD2_HOOKS = {
-    "800fa45c": "extern void jd2_probe_track(void); jd2_probe_track();",
-    "800900f4": "extern void jd2_probe_map(void); jd2_probe_map();",
-}
-JD2_CATALOG_DECOMPRESS = " if (1) { cpu.lr = 0x8003517cu; f_80022ce4(); }"
-JD2_SITES = {
-    "80034ee8": (
-        JD2_CATALOG_DECOMPRESS,
-        "{ uint32_t output = cpu.r[5];\n"
-        + JD2_CATALOG_DECOMPRESS
-        + "\n  extern void jd2_probe_catalog(uint32_t, uint32_t);\n"
-        "  jd2_probe_catalog(output, rd32s(cpu.r[1] + 8)); }",
-    ),
-    "803e7510": (
-        "L_803e7d18:;",
-        "L_803e7d18:;\n"
-        " extern void jd2_probe_input(uint32_t, uint32_t, uint32_t, uint32_t);\n"
-        " jd2_probe_input(rd32s(cpu.r[1] + 580), cpu.r[25], cpu.r[26], cpu.r[29]);",
-    ),
+# SCR_u32_Run, WOR_LoadGroupMask, catalog decompression and KPAD return sites.
+JD2_ADDRESSES = {
+    "SD2Y41": ("800fa45c", "800900f4", "80034ee8", "8003517c", "80022ce4", "803e7510", "803e7d18"),
+    "SJ9E41": ("800da50c", "80072bbc", "80027b24", "80027e00", "80015fc4", "803a4f60", "803a5768"),
 }
 
 
 def instrument(directory, disc="SJOE41"):
     sites = JD1_SITES.copy() if disc == "SDNE41" else {}
-    if disc in LYN_VERTEX_COPY_SITES:
+    if disc in JD2_ADDRESSES:
+        track, world, decompress, resume, decode, input_read, input_return = JD2_ADDRESSES[disc]
+        pending = {
+            track: "extern void jd2_probe_track(void); jd2_probe_track();",
+            world: "extern void jd2_probe_map(void); jd2_probe_map();",
+        }
+        decode_catalog = f" if (1) {{ cpu.lr = 0x{resume}u; f_{decode}(); }}"
+        sites[decompress] = (
+            decode_catalog,
+            "{ uint32_t output = cpu.r[5];\n"
+            + decode_catalog
+            + "\n  extern void jd2_probe_catalog(uint32_t, uint32_t);\n"
+            "  jd2_probe_catalog(output, rd32s(cpu.r[1] + 8)); }",
+        )
+        sites[input_read] = (
+            f"L_{input_return}:;",
+            f"L_{input_return}:;\n"
+            " extern void jd2_probe_input(uint32_t, uint32_t, uint32_t, uint32_t);\n"
+            " jd2_probe_input(rd32s(cpu.r[1] + 580), cpu.r[25], cpu.r[26], cpu.r[29]);",
+        )
         address, register = LYN_VERTEX_COPY_SITES[disc]
-        pending = JD2_HOOKS.copy() if disc == "SD2Y41" else {}
-        if disc == "SD2Y41":
-            sites.update(JD2_SITES)
         sites[address] = (
             f"wr32((cpu.r[26] + cpu.r[31]), double_to_single(cpu.f[{register}]));",
             "wr32((cpu.r[26] + cpu.r[31]), cpu.r[3]);",
@@ -168,11 +169,14 @@ def instrument(directory, disc="SJOE41"):
             break
     if pending or sites:
         raise ValueError(f"Missing {disc} probe hook addresses {', '.join(pending | sites)}")
+    if disc in JD2_ADDRESSES:
+        fix_lyn_stream_wait(directory, disc)
 
 
-# STD_b_IOReadFileAsyncWait in the verified JD2 and JD3 executables.
+# STD_b_IOReadFileAsyncWait in the verified LyN executables.
 LYN_STREAM_SITES = {
     "SD2Y41": ("8004903c", "80049128", "80343110", "803470b0", "80343150"),
+    "SJ9E41": ("8003a9d8", "8003aac0", "80302730", "803064f0", "80302770"),
     "SJDE41": ("8004f874", "8004f960", "8032acf0", "8032ed10", "8032ad30"),
 }
 

@@ -17,7 +17,7 @@ from urllib.request import urlretrieve
 from probe import jd1, jd2
 from probe.collection import EDITIONS, catalog, write_catalog
 from probe.instrument import (
-    LYN_VERTEX_COPY_SITES, fix_jd2_bigfile, fix_lyn_stream_wait, instrument, instrument_jd3,
+    fix_jd2_bigfile, instrument, instrument_jd3,
 )
 from probe.lyn_previews import JD3_SONGS, prepare_jd3_previews
 from probe.previews import prepare_previews
@@ -51,7 +51,7 @@ EMBEDDED_TITLES = {
     "SJOE41": "jd2014_title", "SE3E41": "jd2015_title", "SJDE41": "jd3_title",
     **{disc: f"title_{disc}" for disc in EDITIONS},
     "SDNE41": "jd1_title",
-    "SD2Y41": "jd2_title",
+    "SD2Y41": "jd2_title", "SJ9E41": "summer_title",
 }
 BACKUPS = Path("/mnt/synology/Games/wii")
 
@@ -180,9 +180,11 @@ def prepare_disc(disc, disc_id, image, env):
 def prepare_probe_adapter():
     folder = ROOT / "probe"
     adapter = RUNTIME / "runtime/jd2014_probe.c"
-    slots = "\n".join(f"  {{0x{key}u, {offset}, {index}}},"
-                      for key, _, _, _, index, offset in jd2.SONGS)
-    content = (folder / "jd2014.c").read_text() + "\n" + (folder / "jd2.inc").read_text().replace("JD2_SONG_SLOTS", slots)
+    selection = (folder / "jd2.inc").read_text()
+    for placeholder, songs in (("JD2_SONG_SLOTS", jd2.JD2_SONGS), ("SUMMER_SONG_SLOTS", jd2.SUMMER_SONGS)):
+        slots = "\n".join(f"  {{0x{key}u, {offset}, {slot}u}}," for key, _, _, _, slot, offset in songs)
+        selection = selection.replace(placeholder, slots)
+    content = (folder / "jd2014.c").read_text() + "\n" + selection
     if not adapter.exists() or adapter.read_text() != content:
         adapter.write_text(content)
 
@@ -199,7 +201,7 @@ def build(disc_id, image, jobs):
          "--no-pack", "--jobs", str(jobs), "--fifo-breakpoints"],
         cwd=UPSTREAM, env=env, check=True,
     )
-    if disc_id in EMBEDDED_TITLES or disc_id in LYN_VERTEX_COPY_SITES:
+    if disc_id in EMBEDDED_TITLES:
         title_build = RUNTIME / f"build-{disc_id}"
         generated = title_build / "generated"
         if disc_id == "SJDE41":
@@ -208,7 +210,6 @@ def build(disc_id, image, jobs):
         else:
             instrument(generated, disc_id)
         if disc_id == "SD2Y41":
-            fix_lyn_stream_wait(generated, disc_id)
             if (disc / "files/WD2.bbf").is_file() and not (disc / "files/WD2.bf").is_file():
                 fix_jd2_bigfile(generated)
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
@@ -243,7 +244,7 @@ def boot(disc_id, fresh, song):
             env["JD2014_PROBE_MAP"] = song
         elif disc_id == "SDNE41" and any(key == song for key, _, _, _ in jd1.SONGS):
             env["JD1_PROBE_MAP"] = song
-        elif disc_id == "SD2Y41" and any(key == song for key, *_ in jd2.SONGS):
+        elif disc_id in jd2.EDITIONS and any(key == song for key, *_ in jd2.EDITIONS[disc_id][1]):
             env["JD2_PROBE_MAP"] = song
         elif disc_id == "SJDE41" and song in JD3_SONGS:
             env["JD3_PROBE_MAP"] = song
@@ -281,9 +282,9 @@ def build_couch(jobs):
             collection[disc_id] = "Just Dance", jd1.catalog()
             jd1.prepare_previews(disc, CACHE / "previews" / disc_id)
             instrument(title_build / "generated", disc_id)
-        elif disc_id == "SD2Y41":
-            collection[disc_id] = "Just Dance 2", jd2.catalog()
-            jd2.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
+        elif disc_id in jd2.EDITIONS:
+            collection[disc_id] = jd2.catalog(disc_id)
+            jd2.prepare_previews(disc_id, disc, CACHE / "previews" / disc_id, jobs)
             instrument(title_build / "generated", disc_id)
         else:
             if disc_id in EDITIONS:
