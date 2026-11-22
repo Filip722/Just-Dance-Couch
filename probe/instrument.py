@@ -131,6 +131,24 @@ def instrument(directory, disc="SJOE41"):
             f"wr32((cpu.r[26] + cpu.r[31]), double_to_single(cpu.f[{register}]));",
             "wr32((cpu.r[26] + cpu.r[31]), cpu.r[3]);",
         )
+    elif disc == "SJHE41":
+        pending = {
+            "800ee7cc": "extern void gh_probe_track(void); gh_probe_track();",
+            "802da93c": "extern void gh_probe_movie(void); gh_probe_movie();",
+            "803b0030": "extern void gh_probe_video_frame(void); gh_probe_video_frame();",
+        }
+        sites["800237a0"] = (
+            "L_80023b24:;",
+            "L_80023b24:;\n"
+            " extern void jd2_probe_catalog(uint32_t, uint32_t);\n"
+            " if (cpu.r[26] && cpu.r[27]) jd2_probe_catalog(cpu.r[26], rd32(cpu.r[27]));",
+        )
+        sites["803a28e0"] = (
+            "L_803a30cc:;",
+            "L_803a30cc:;\n"
+            " extern void gh_probe_input(uint32_t, uint32_t, uint32_t, uint32_t);\n"
+            " gh_probe_input(rd32s(cpu.r[1] + 580), cpu.r[25], cpu.r[26], cpu.r[29]);",
+        )
     elif disc in UBIART_ADDRESSES:
         pending = dict(zip(UBIART_ADDRESSES[disc].split(),
                            (JD2015_HOOKS[key] for key in UBIART_HOOK_KEYS.split()), strict=True))
@@ -169,7 +187,7 @@ def instrument(directory, disc="SJOE41"):
             break
     if pending or sites:
         raise ValueError(f"Missing {disc} probe hook addresses {', '.join(pending | sites)}")
-    if disc in JD2_ADDRESSES:
+    if disc in LYN_STREAM_SITES:
         fix_lyn_stream_wait(directory, disc)
 
 
@@ -178,6 +196,7 @@ LYN_STREAM_SITES = {
     "SD2Y41": ("8004903c", "80049128", "80343110", "803470b0", "80343150"),
     "SJ9E41": ("8003a9d8", "8003aac0", "80302730", "803064f0", "80302770"),
     "SJDE41": ("8004f874", "8004f960", "8032acf0", "8032ed10", "8032ad30"),
+    "SJHE41": ("80046fac", "80047094", "802feaa0", "80302a90", "802feae0"),
 }
 
 

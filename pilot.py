@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 from urllib.request import urlretrieve
 
-from probe import jd1, jd2
+from probe import gh, jd1, jd2
 from probe.collection import EDITIONS, catalog, write_catalog
 from probe.instrument import (
     fix_jd2_bigfile, instrument, instrument_jd3,
@@ -51,7 +51,7 @@ EMBEDDED_TITLES = {
     "SJOE41": "jd2014_title", "SE3E41": "jd2015_title", "SJDE41": "jd3_title",
     **{disc: f"title_{disc}" for disc in EDITIONS},
     "SDNE41": "jd1_title",
-    "SD2Y41": "jd2_title", "SJ9E41": "summer_title",
+    "SD2Y41": "jd2_title", "SJ9E41": "summer_title", "SJHE41": "gh_title",
 }
 BACKUPS = Path("/mnt/synology/Games/wii")
 
@@ -182,9 +182,12 @@ def prepare_probe_adapter():
     adapter = RUNTIME / "runtime/jd2014_probe.c"
     selection = (folder / "jd2.inc").read_text()
     for placeholder, songs in (("JD2_SONG_SLOTS", jd2.JD2_SONGS), ("SUMMER_SONG_SLOTS", jd2.SUMMER_SONGS)):
-        slots = "\n".join(f"  {{0x{key}u, {offset}, {slot}u}}," for key, _, _, _, slot, offset in songs)
+        slots = "\n".join(f"  {{0x{key}u, {offset}, {slot}u, 0}}," for key, _, _, _, slot, offset in songs)
         selection = selection.replace(placeholder, slots)
-    content = (folder / "jd2014.c").read_text() + "\n" + selection
+    gh_slots = "\n".join(f"  {{0x{key}u, {offset}, {slot}u, 0x{coach}u}},"
+                         for key, _, _, _, slot, offset, coach in gh.SONGS)
+    selection = selection.replace("GH_SONG_SLOTS", gh_slots)
+    content = (folder / "jd2014.c").read_text() + "\n" + selection + "\n" + (folder / "gh.inc").read_text()
     if not adapter.exists() or adapter.read_text() != content:
         adapter.write_text(content)
 
@@ -246,6 +249,8 @@ def boot(disc_id, fresh, song):
             env["JD1_PROBE_MAP"] = song
         elif disc_id in jd2.EDITIONS and any(key == song for key, *_ in jd2.EDITIONS[disc_id][1]):
             env["JD2_PROBE_MAP"] = song
+        elif disc_id == "SJHE41" and any(key == song for key, *_ in gh.SONGS):
+            env["JD2_PROBE_MAP"] = song
         elif disc_id == "SJDE41" and song in JD3_SONGS:
             env["JD3_PROBE_MAP"] = song
         else:
@@ -281,6 +286,10 @@ def build_couch(jobs):
         elif disc_id == "SDNE41":
             collection[disc_id] = "Just Dance", jd1.catalog()
             jd1.prepare_previews(disc, CACHE / "previews" / disc_id)
+            instrument(title_build / "generated", disc_id)
+        elif disc_id == "SJHE41":
+            collection[disc_id] = "Just Dance Greatest Hits", gh.catalog()
+            gh.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
             instrument(title_build / "generated", disc_id)
         elif disc_id in jd2.EDITIONS:
             collection[disc_id] = jd2.catalog(disc_id)

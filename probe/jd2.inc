@@ -2,13 +2,14 @@
 enum {
   JD2_TITLE_LOW = 0x53443259,
   SUMMER_TITLE_LOW = 0x534a3945,
+  GH_TITLE_LOW = 0x534a4845,
   JD2_KPAD_STATUS_BYTES = 240,
   JD2_KPAD_MAX_SAMPLES = 16,
   JD2_MENU_SETTLE_MS = 2000,
 };
 
 typedef struct {
-  uint32_t key, slot_offset, slot;
+  uint32_t key, slot_offset, slot, coach_key;
 } Jd2SongSlot;
 
 // Generated from the verified USA catalog in probe/jd2.py.
@@ -17,6 +18,9 @@ JD2_SONG_SLOTS
 };
 static const Jd2SongSlot summer_song_slots[] = {
 SUMMER_SONG_SLOTS
+};
+static const Jd2SongSlot gh_song_slots[] = {
+GH_SONG_SLOTS
 };
 
 typedef struct {
@@ -41,6 +45,13 @@ static const Jd2Edition jd2_editions[] = {
     .first_slot_offset = 702, .first_slot = 0x0f304892u,
     .input_caller = 0x8002305cu, .load_group_caller = 0x801236ecu,
     .slots = summer_song_slots, .count = sizeof summer_song_slots / sizeof *summer_song_slots,
+  },
+  {
+    .name = "Just Dance Greatest Hits", .title_low = GH_TITLE_LOW,
+    .catalog_bytes = 60005, .catalog_signature = 0x92040000u,
+    .first_slot_offset = 722, .first_slot = 0x233018b9u,
+    .input_caller = 0x8002eb30u,
+    .slots = gh_song_slots, .count = sizeof gh_song_slots / sizeof *gh_song_slots,
   },
 };
 

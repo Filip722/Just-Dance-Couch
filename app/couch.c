@@ -100,7 +100,8 @@ static void find_remote(Browser *browser) {
 }
 
 static int needs_song_at_boot(const char *disc) {
-  return !strcmp(disc, "SDNE41") || !strcmp(disc, "SD2Y41") || !strcmp(disc, "SJ9E41");
+  return !strcmp(disc, "SDNE41") || !strcmp(disc, "SD2Y41") ||
+         !strcmp(disc, "SJ9E41") || !strcmp(disc, "SJHE41");
 }
 
 static int start_worker(Browser *browser, const char *map) {

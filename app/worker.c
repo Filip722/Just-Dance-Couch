@@ -208,7 +208,8 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   setenv("WII_RECOMP_CONTROLLERS", "controllers.ini", 0);
   const char *map_variable = "JD2014_PROBE_MAP";
   if (!strcmp(disc, "SDNE41")) map_variable = "JD1_PROBE_MAP";
-  else if (!strcmp(disc, "SD2Y41") || !strcmp(disc, "SJ9E41")) map_variable = "JD2_PROBE_MAP";
+  else if (!strcmp(disc, "SD2Y41") || !strcmp(disc, "SJ9E41") || !strcmp(disc, "SJHE41"))
+    map_variable = "JD2_PROBE_MAP";
   if (map && strcmp(map, "-")) setenv(map_variable, map, 1);
   else unsetenv(map_variable);
   char *arguments[] = {program, sys, NULL};

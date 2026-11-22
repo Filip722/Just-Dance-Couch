@@ -4,7 +4,7 @@ A native Linux x86-64 launcher for locally owned Just Dance Wii backups. It buil
 
 ## Current state
 
-- The fullscreen picker opens on **Just Dance 2014** and includes **Just Dance 2014–2019**, the original **Just Dance**, **Just Dance 2**, and **Just Dance Summer Party**. Each edition has an alphabetical five-column grid with three visible rows. Press Right at the end of a row or Left at the start of a row to change editions. A tile shows a still from its locally cached coach video and shows the clip when highlighted. The previews also play music in the 2014–2019 editions, Just Dance 2, and Summer Party. The launcher warms the newer edition you are browsing.
+- The fullscreen picker opens on **Just Dance 2014** and includes **Just Dance 2014–2019**, the original **Just Dance**, **Just Dance 2**, **Just Dance Summer Party**, and **Just Dance Greatest Hits**. Each edition has an alphabetical five-column grid with three visible rows. Press Right at the end of a row or Left at the start of a row to change editions. A tile shows a still from its locally cached coach video and shows the clip when highlighted. The previews also play music in the 2014–2019 editions, Just Dance 2, Summer Party, and Greatest Hits. The launcher warms the newer edition you are browsing.
 - **Just Dance 2014 (USA)** launches all 48 listed routines from the original game. Loopback tests verified scoring in **Just Dance**, **Get Lucky**, and **#thatPOWER**, the **Get Lucky** recap, and return to the selected row after completion and cancellation.
 - **Just Dance 2015 (USA)** launches all 42 listed routines from the original game. The launcher starts the 2015 worker when you open its page and keeps the boot and lobby screens hidden. Loopback tests verified scoring in **4x4** and **Happy**, cancellation from **4x4**, and return to the picker after the **Happy** recap.
 - **Just Dance 3 (USA, revision 1)** has a native command-line probe for **Pump It** and **Take On Me**, with local audio and coach previews for both. Both songs reached the game’s move-scoring callback. The direct path still renders a black gameplay window, so JD3 is available as a diagnostic.
@@ -13,7 +13,8 @@ A native Linux x86-64 launcher for locally owned Just Dance Wii backups. It buil
 - **Just Dance (USA)** follows 2019 in the picker. All 32 tiles have local coach video and launch the matching original routine. The software checks recorded scoring and the original recap. Some test runs reached the recap early. The original edition starts a fresh worker after you select a song because its database needs the selection during startup.
 - **Just Dance 2 (USA)** has 47 alphabetical tiles with local coach and music previews. The original game launched Cosmic Girl, Rasputin, and Jai Ho from their native keys. Cosmic Girl reached motion scoring, and Soul Bossa Nova reached the original recap. Cancelling Cosmic Girl and Jai Ho returned to their tiles. The cold fullscreen launches took 41–42 seconds in loopback.
 - **Just Dance Summer Party (USA)** has 23 alphabetical tiles with local coach and music previews. Pon De Replay opened fullscreen in about 42 seconds, scored with simulated motion, and returned to its tile on Escape. Firework reached original gameplay in an isolated stock launch.
-- All 17 Wii disc revisions were verified and compiled locally. Just Dance 3, Just Dance 4, and Greatest Hits still need a complete direct launch from the picker. Kids and Disney Party editions are outside this pass.
+- **Just Dance Greatest Hits (USA)** adds 37 alphabetical songs with local coach and music previews. Rasputin and Jai Ho opened their original fullscreen routines in about 28 seconds in loopback. Escape restored the selected tile.
+- All 17 Wii disc revisions were verified and compiled locally. Just Dance 3 and Just Dance 4 still need a complete direct launch from the picker. Kids and Disney Party editions are outside this pass.
 
 The repository contains the launcher, build scripts, runtime patches, and documentation. Use your own disc backups to build locally. Extracted data, generated title code, saves, binaries, and traces stay in the local cache and data directories.
 
@@ -22,7 +23,7 @@ The repository contains the launcher, build scripts, runtime patches, and docume
 The build uses Python 3.12 or newer, Clang, CMake, Ninja, pkg-config, FFmpeg, GNU binutils and patch, and the GLFW, SDL3, Vulkan, shaderc, ALSA, Fontconfig, FreeType and libusb-1.0 development libraries. Wii Recomp and the fallback nodtool download are pinned. On this host the cache supplies the `clang-19` shim, the verified nodtool, and Debian development packages staged under `deps/usr`. The build accepts system dependencies on other machines. [Wii Recomp source and requirements](https://github.com/Zontex/wii-recomp/tree/55fb408eb1f2df75e914524dc092e69c70739ded)
 
 ```bash
-for disc in SJOE41 SE3E41 SJNE41 SZ7E41 SE8E41 S5EE41 SJDE41 SDNE41 SD2Y41 SJ9E41; do
+for disc in SJOE41 SE3E41 SJNE41 SZ7E41 SE8E41 S5EE41 SJDE41 SDNE41 SD2Y41 SJ9E41 SJHE41; do
   python3 -B pilot.py build --disc "$disc"
 done
 python3 -B pilot.py couch
@@ -68,6 +69,8 @@ python3 -B pilot.py build --disc SD2Y41
 python3 -B pilot.py boot --fresh --disc SD2Y41 --song 908020bd  # Cosmic Girl
 python3 -B pilot.py build --disc SJ9E41
 python3 -B pilot.py boot --fresh --disc SJ9E41 --song 64304716  # Pon De Replay
+python3 -B pilot.py build --disc SJHE41
+python3 -B pilot.py boot --fresh --disc SJHE41 --song 76c06ae0  # Rasputin
 python3 -B pilot.py boot --fresh --disc SJDE41 --song 2dc0bf8b  # Take On Me
 python3 -B pilot.py boot --fresh --disc SJDE41 --song 2dc0e3f1  # Pump It
 python3 -B pilot.py build --disc SZ7E41
@@ -84,7 +87,7 @@ The original Just Dance probe uses the game’s Quick Play, Regular, one-round a
 
 The Just Dance 2 and Summer Party builds check for a completed DVD request before suspending the streaming thread. They also preserve the packed vertex coordinates that the games use to render their coach videos and backgrounds. Both workers move the chosen song into the first original carousel slot in memory and verify its key before revealing gameplay. Loopback tests reached scoring on Cosmic Girl and Pon De Replay, and Escape restored their selected tiles. Traces and captures are under `probe/legacy-editions/`.
 
-An isolated JD4 trace reached the original song catalog after enabling the corresponding compiled module. A later selected-song attempt stopped at an untranslated indirect call. Traces are in `probe/legacy-launch/SJXE41/`.
+Greatest Hits opens its first local song from the original carousel and verifies the matching coach stream before revealing gameplay. Both loopback checks ran with the game’s own choreography and scoring logic. An isolated JD4 trace reached the original song catalog after enabling the corresponding compiled module. A later selected-song attempt stopped at an untranslated indirect call. Traces are in `probe/legacy-launch/SJXE41/`.
 
 The expanded launcher uses the same original Classic song lookup and lobby flow in the four later UbiArt editions. The newer catalogs are generated at build time from locally available Classic song descriptors and audio. The one-time preview cache contains coach clips for all 177 songs. In a warmed 2019 A/B test, skipping the hidden grip popup reduced **Milosc W Zakopanem** from 6.1 to 3.9 seconds between selection and fullscreen. The same cold-worker test went from 11.3 to 9.3 seconds. Software tests with the shortcut verified fullscreen scoring and HOME return in all four editions. Dismissing the original 2019 **Un Poco Loco** recap also returned to its selected tile. Timings and test logs are under `probe/launch-timing/`. A full browser test navigated across all six editions, launched **Familiar**, and confirmed return to the selected 2019 tile after the recap. Logs are under `probe/collection/`.
 
@@ -110,7 +113,7 @@ All 17 backups produced video under the planning reference run and were compiled
 | Just Dance 2019 | S5EE41 | 48 local Classic songs in the picker | Native direct launch, scoring, and original recap | Familiar | Pending |
 | Just Dance Disney Party | SJ6E41 | Pending | Native translation built | Pending | Pending |
 | Just Dance Disney Party 2 | S5DE41 | Pending | Native translation built | Pending | Pending |
-| Just Dance Greatest Hits | SJHE41 | `LynWiiRetail.MAP`, `.elf` and `.sel` present | Native stock song selector rendered | Pending | Pending |
+| Just Dance Greatest Hits | SJHE41 | 37 local songs with coach and music previews | Direct launch and picker cancellation verified | Rasputin, Jai Ho | Pending |
 | Just Dance Kids | SDZE41 | Pending | Native translation built | Pending | Pending |
 | Just Dance Kids 2 | SJZE41 | Pending | Native translation built | Pending | Pending |
 | Just Dance Kids 2014 | SJ7E41 | Pending | Native translation built | Pending | Pending |
