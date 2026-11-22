@@ -50,6 +50,8 @@ The following cold launch times run from selection to fullscreen in loopback on 
 
 After the catalog warmed up, Girls Just Want To Have Fun appeared in about 6.6 seconds in the picker test, and Big Girl appeared in 10.4 seconds. Escape returned to both selected tiles. Disturbia appeared in 13.0 seconds after a 12-second pause at the ready catalog. The loopback sweep captured gameplay audio in every edition. The two original games also played through an isolated PipeWire sink without ALSA write errors at the default render scale. The audio ring now spreads each one-sample clock correction over the output period. With a 1 kHz reference tone and one correction per 384-frame period, RMS error fell from 1,884 to 60 in signed 16-bit sample units.
 
+The Linux audio output starts with a 40 ms ALSA buffer and retries with 100 ms after its first underrun. On a private 48 kHz PipeWire graph with 2,048-frame periods, the 40 ms configuration failed before Jailhouse Rock started. The retry restored 24 seconds of uninterrupted gameplay audio in the capture. The mixer output also matched the disc track in comparisons during gameplay.
+
 ## Build and run
 
 The build uses Python 3.12 or newer, Clang, CMake, Ninja, pkg-config, FFmpeg, GNU binutils and patch, and the GLFW, SDL3, Vulkan, shaderc, ALSA, Fontconfig, FreeType and libusb-1.0 development libraries. Wii Recomp and the fallback nodtool download are pinned. On this host the cache supplies the `clang-19` shim, the verified nodtool, and Debian development packages staged under `deps/usr`. The build accepts system dependencies on other machines. [Wii Recomp source and requirements](https://github.com/Zontex/wii-recomp/tree/55fb408eb1f2df75e914524dc092e69c70739ded)

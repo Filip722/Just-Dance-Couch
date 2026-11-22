@@ -141,6 +141,7 @@ def prepare_upstream():
                     ARCHIVE_SHA256, f"wii-recomp-{REVISION}")
     # Upgrade runtime source caches that already contain the old audio correction.
     apply_patch(UPSTREAM, ROOT / "patches/obsolete/audio-drift-crossfade.patch", revert=True)
+    apply_patch(UPSTREAM, ROOT / "patches/obsolete/worker-audio.patch", revert=True)
     for patch in sorted((ROOT / "patches").glob("*.patch")):
         apply_patch(UPSTREAM, patch)
 
