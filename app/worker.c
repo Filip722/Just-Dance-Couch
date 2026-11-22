@@ -45,10 +45,16 @@ static pthread_cond_t selection_ready = PTHREAD_COND_INITIALIZER;
 static int bridge_closed;
 static int library_ready;
 static const Edition *edition;
+static const Song *add_on;
 
 const char *jd_couch_requested_map(void) {
+  if (add_on) return add_on->map;
   int selected = atomic_load(&requested_song);
   return selected ? edition->songs[selected - 1].map : NULL;
+}
+
+unsigned jd_couch_dlc_index(void) {
+  return add_on ? add_on->content_index : 0;
 }
 
 void jd_couch_library_ready(void) {
@@ -59,11 +65,12 @@ void jd_couch_library_ready(void) {
 }
 
 int jd_couch_waiting_for_song(void) {
-  return bridge_socket >= 0 && !atomic_load(&requested_song);
+  return bridge_socket >= 0 && !add_on && !atomic_load(&requested_song);
 }
 
 const char *jd_couch_wait_for_map(void) {
   if (bridge_socket < 0) return NULL;
+  if (add_on) return add_on->map;
   pthread_mutex_lock(&selection_lock);
   atomic_store(&boot_parked, !atomic_load(&requested_song));
   jd_couch_library_ready();
@@ -131,7 +138,7 @@ static void *read_remote(void *unused) {
   while (session_read(bridge_socket, &message, 0) > 0) {
     switch (message.type) {
       case SELECT_SONG:
-        if (message.size == 1 && edition && message.data[0] < edition->count) {
+        if (message.size == 1 && !add_on && edition && message.data[0] < edition->count) {
           pthread_mutex_lock(&selection_lock);
           atomic_store(&requested_song, message.data[0] + 1);
           pthread_cond_signal(&selection_ready);
@@ -188,14 +195,25 @@ static int check_header(const char *root, const char *disc, const char *relative
 }
 
 int run_worker(char *program, const char *disc, const char *map, int socket, int simulated) {
-  char cache[PATH_MAX], state[PATH_MAX], sys[PATH_MAX], saves[PATH_MAX], builtin[24];
-  for (int i = 0; i < edition_count; i++)
-    if (!strcmp(disc, editions[i].disc)) edition = &editions[i];
+  char cache[PATH_MAX], state[PATH_MAX], sys[PATH_MAX], saves[PATH_MAX], nand[PATH_MAX], builtin[24];
+  if (!strcmp(disc, "DLC")) {
+    const Edition *page = &editions[edition_count - 1];
+    char *end;
+    long row = map ? strtol(map, &end, 10) : -1;
+    if (page->disc || !map || !*map || *end || row < 0 || row >= page->count) return 10;
+    add_on = &page->songs[row];
+    disc = add_on->disc;
+    map = add_on->map;
+  }
+  edition = edition_for_disc(disc);
   if (!edition && strcmp(disc, "SJDE41")) return 10;
   if (!root_path(cache, sizeof cache, "XDG_CACHE_HOME", ".cache") ||
       !root_path(state, sizeof state, "XDG_DATA_HOME", ".local/share") ||
       snprintf(sys, sizeof sys, "%s/discs/%s/sys", cache, disc) >= (int)sizeof sys ||
       snprintf(saves, sizeof saves, "%s/%s", state, disc) >= (int)sizeof saves) return 10;
+  if (add_on && (snprintf(nand, sizeof nand, "%s/dlc/%s/mounts/%u", cache,
+                          add_on->pack, add_on->content_index) >= (int)sizeof nand ||
+                 access(nand, R_OK | X_OK))) return 10;
   uint8_t header[8] = {0}, usa[] = {0, 0, 0, 1};
   memcpy(header, disc, 6);
   header[7] = !strcmp(disc, "SJDE41");
@@ -244,8 +262,9 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
     map_variable = "JD2_PROBE_MAP";
   fast_boot = socket >= 0 && map_variable;
   if (!map_variable) map_variable = "JD2014_PROBE_MAP";
+  if (add_on && !strcmp(disc, "SJDE41")) map_variable = "JD3_PROBE_MAP";
   if (map && strcmp(map, "-")) setenv(map_variable, map, 1);
   else unsetenv(map_variable);
-  char *arguments[] = {program, sys, NULL};
-  return jd_runtime_main(2, arguments);
+  char *arguments[] = {program, sys, add_on ? nand : NULL, NULL};
+  return jd_runtime_main(add_on ? 3 : 2, arguments);
 }

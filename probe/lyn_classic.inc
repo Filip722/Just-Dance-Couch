@@ -7,6 +7,7 @@ static int gh_movie_confirmed, gh_movie_visible, gh_recap, jd4_scene_confirmed;
 void gh_probe_video_frame(void);
 
 void gh_probe_track(void) {
+  if (dlc_index() && title->title_low == SJDE41_TITLE_LOW) return;
   if ((!couch_booting() && !jd2_song && !getenv("JD2_PROBE_MAP")) || gh_recap) return;
   if (!jd2_edition) jd2_edition = jd2_title_edition();
   const char *track = (const char *)host(cpu.r[3] + 8);
@@ -140,6 +141,16 @@ void jd4_probe_album(uint32_t buffer, uint32_t bytes) {
   // Keep each original argument list and invocation intact as it moves.
   enum { ALBUM_BYTES = 104, ALBUM_KEY_OFFSET = 6 };
   uint32_t first = buffer + jd2_edition->first_slot_offset;
+  if (dlc_index()) {
+    // Point the original album's routine references at the mounted download.
+    uint32_t previous = __builtin_bswap32(jd2_edition->first_slot);
+    if (rd32(first) != previous || rd32(first - ALBUM_KEY_OFFSET) != 0x23080000u) return;
+    for (unsigned i = 0; i < ALBUM_BYTES - ALBUM_KEY_OFFSET - 3; i++)
+      if (rd32(first + i) == previous) wr32(first + i, __builtin_bswap32(jd2_song->key));
+    jd2_catalog_ready = 1;
+    fprintf(stderr, "probe: selected Just Dance 4 DLC album for %08x\n", jd2_song->key);
+    return;
+  }
   uint32_t selected = buffer + jd2_song->slot_offset;
   if (rd32(first) != __builtin_bswap32(jd2_edition->first_slot) ||
       rd32(selected) != __builtin_bswap32(jd2_song->slot) ||

@@ -39,6 +39,10 @@ def descriptor(entry):
     return title, artist, key
 
 
+def song_order(song):
+    return "".join(char for char in normalize("NFKD", song[0].casefold()) if char.isalnum() or char.isspace())
+
+
 def catalog(disc):
     songs = []
     for key, assets in song_assets(disc).items():
@@ -49,12 +53,10 @@ def catalog(disc):
             if not song[0] or song[2].lower().encode() != key:
                 raise ValueError(f"Invalid song descriptor in {disc.name} for {key!r}")
             songs.append(song)
-    return sorted(songs, key=lambda song: "".join(
-        char for char in normalize("NFKD", song[0].casefold()) if char.isalnum() or char.isspace()
-    ))
+    return sorted(songs, key=song_order)
 
 
-def write_catalog(staging, collection):
+def write_catalog(staging, collection, dlc=()):
     arrays, editions = [], []
     for disc, (edition, songs) in collection.items():
         name = f"songs_{disc}"
@@ -64,4 +66,11 @@ def write_catalog(staging, collection):
         )
         arrays.append(f"static const Song {name}[] = {{\n{entries}}};\n")
         editions.append(f'#define EDITION_{disc} {{"{edition}", "{disc}", {name}, sizeof {name} / sizeof {name}[0]}}')
+    if dlc:
+        entries = "".join(
+            "  {" + ", ".join(json.dumps(field, ensure_ascii=False) for field in song) + "},\n"
+            for song in sorted(dlc, key=song_order)
+        )
+        arrays.append("static const Song songs_dlc[] = {\n" + entries + "};\n")
+        editions.append('#define EDITION_DLC {"DLC", NULL, songs_dlc, sizeof songs_dlc / sizeof songs_dlc[0]}')
     (staging / "collection_catalog.h").write_text("\n".join(arrays + editions) + "\n")

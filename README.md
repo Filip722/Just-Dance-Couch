@@ -67,6 +67,25 @@ couch="${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/bin/just-dance-couch"
 
 The build reads `/mnt/synology/Games/wii/` by default. Pass `build --image /path/to/owned.rvz` to use a copy of the same verified revision. Derived data and build artifacts live in `${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/`. Isolated saves and controller state live in `${XDG_DATA_HOME:-$HOME/.local/share}/just-dance-couch/`. The app reads extracted disc data externally. All 12 playable editions are linked into the executable. The worker uses `WII_RECOMP_NATIVE_ONLY=1` and the executable has zero Dolphin dependencies.
 
+### Wii DLC
+
+`python3 -B pilot.py couch` imports owned USA add-on WADs from `/mnt/synology/Games/wii/DLC/`. Use `couch --dlc-dir /path/to/DLC` for another folder. The first import requires Python `cryptography` and verifies each content file against its Wii title metadata. The build caches the imported contents, thumbnails, and eight-second audio and video previews. The launcher reuses them on startup.
+
+Choose **DLC** after **Just Dance 2019** in the edition picker. The shared page sorts by song title and labels each tile with its source game. The selected title boots with the requested download and any shared DLC catalog it needs. D-pad, A, and HOME work the same way as on the disc pages.
+
+All 135 routines reached their matching fullscreen dance in native loopback tests. The picker returned to the selected **Part of Me** tile after cancelling the Just Dance 4 routine. The Just Dance 3 **Jambo Mambo** test reached original move scoring and produced gameplay audio through an isolated PipeWire sink.
+
+| USA Wii pack | Routines |
+|---|---:|
+| Just Dance 2 | 25 |
+| Just Dance 3 | 37 |
+| Just Dance 4 | 21 |
+| Just Dance 2014 | 27 |
+| Just Dance 2015 | 25 |
+| **Total** | **135** |
+
+The 2014 pack's original catalog names **We Can’t Stop** in slot 4. The current content for that slot is a placeholder. The playable routine is in the 2015 pack. The five WADs cover the USA Wii add-on packs found for the editions in this launcher. Just Dance Unlimited serves a separate streaming catalog on supported platforms such as Wii U. [Ubisoft's Just Dance 2016 announcement](https://news.ubisoft.com/en-us/article/5elZ5Kvty0JCVRuUpjhrOt/new-content-for-just-dance-unlimited) · [Ubisoft's Just Dance 2019 launch](https://news.ubisoft.com/en-us/article/01NgKj4HnqqNuKzZbuVfIR/just-dance-2019-available-now)
+
 Game windows enter fullscreen during the handoff from the picker. Each launcher session writes detailed game output to `${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/game-<launcher-pid>.log`. Set `JUST_DANCE_GAME_TRACE=1` to print that trace in the terminal.
 
 Use `"$couch" --loopback` for keyboard verification. The arrow keys select a tile. Enter launches it or dismisses the original recap. Escape in the game runs the HOME cancellation path. `"$couch" --boot SJDE41` boots the embedded JD3 translation for diagnostics.
@@ -154,5 +173,3 @@ All 17 backups produced video under the planning reference run and were compiled
 | Just Dance Summer Party | SJ9E41 | 23 local songs with coach and music previews | Direct launch, scoring, and picker cancellation verified | Pon De Replay, Firework | Pending |
 
 The Kids and Disney Party discs use `data_tbl/game_data.arc` and numbered stages. Their song selection and media formats differ from the 2014–2019 UbiArt adapter.
-
-All five DLC WADs contain USA title metadata for Just Dance 2, 3, 4, 2014 and 2015. Offline availability and gameplay remain pending.

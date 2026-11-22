@@ -6,6 +6,8 @@ enum { GRID_COLUMNS = 5, GRID_ROWS = 3 };
 
 typedef struct {
   const char *title, *artist, *map;
+  const char *disc, *pack;
+  unsigned content_index;
 } Song;
 
 typedef struct {
@@ -17,6 +19,7 @@ typedef struct {
 extern const Song songs[];
 extern const Edition editions[];
 extern const int edition_count;
+const Edition *edition_for_disc(const char *disc);
 typedef struct SongGrid SongGrid;
 
 SongGrid *song_grid_create(SDL_Renderer *renderer);

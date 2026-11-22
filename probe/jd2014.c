@@ -14,7 +14,9 @@ enum {
   GAME_MANAGER_SDA_OFFSET = 0x14b0,
   DESCRIPTOR_MAP_NAME = 0x5c,
   SONG_MODE_CLASSIC = 0,
+  SONG_MODE_ANY = 6,
   SONG_VERSION_DISC = 1,
+  SONG_VERSION_DLC = 2,
   MODULE_GAMEPLAY_CLASSIC = 8,
   SJOE41_TITLE_LOW = 0x534a4f45,
   SPLASH_INITIALIZED = 0, SPLASH_DISPLAYING = 4, SPLASH_PAUSED = 8,
@@ -32,6 +34,7 @@ static const uint32_t SPLASH_END_DISPLAYING = 0x8004e334u;
 
 extern const char *jd_couch_requested_map(void) __attribute__((weak));
 extern const char *jd_couch_wait_for_map(void) __attribute__((weak));
+extern unsigned jd_couch_dlc_index(void) __attribute__((weak));
 extern void time_boot_finish(void);
 extern void jd_couch_library_ready(void) __attribute__((weak));
 extern int jd_couch_loading(void) __attribute__((weak));
@@ -41,6 +44,18 @@ extern void jd_couch_game_event(int recap) __attribute__((weak));
 static const char *requested_map;
 static uint32_t selected_entry;
 static int map_seen, song_started, results_seen;
+
+static unsigned dlc_index(void) {
+  return jd_couch_dlc_index ? jd_couch_dlc_index() : 0;
+}
+
+static int waiting_for_dlc(void) {
+  // DLC enumeration runs on a guest thread while the disc database starts.
+  static uint64_t first_lookup;
+  uint64_t now = time_base();
+  if (!first_lookup) first_lookup = now;
+  return now - first_lookup < 12 * 60750000ull;
+}
 
 static int verified_title(void) {
   return title->title_low == SJOE41_TITLE_LOW && title->program_check == 0xd3bf2cfe5e138e37ull;
@@ -134,13 +149,15 @@ int jd2014_probe_direct(void) {
   cpu.r[1] = stack;
   cpu.r[3] = database;
   cpu.r[4] = string;
-  cpu.r[5] = SONG_MODE_CLASSIC;
-  cpu.r[6] = SONG_VERSION_DISC;
+  unsigned dlc = dlc_index();
+  cpu.r[5] = dlc ? SONG_MODE_ANY : SONG_MODE_CLASSIC;
+  cpu.r[6] = dlc ? SONG_VERSION_DLC : SONG_VERSION_DISC;
   cpu.r[7] = UINT32_MAX; // Use the same lookup flags as PreLobby's confirmation.
   dispatch(DATABASE_GET_SONG);
   selected_entry = cpu.r[3];
   cpu = saved;
   if (!selected_entry) {
+    if (dlc && waiting_for_dlc()) return 0;
     fprintf(stderr, "probe: %s missing from the original song database\n", requested_map);
     exit(2);
   }
@@ -155,7 +172,8 @@ int jd2014_probe_direct(void) {
   cpu.r[5] = 0;
   dispatch(MANAGER_SET_SONG);
   cpu = saved;
-  fprintf(stderr, "probe: queued %s (classic, disc) at %.0f ms\n", requested_map, (double)time_base() / 60750);
+  fprintf(stderr, "probe: queued %s (%s) at %.0f ms\n", requested_map,
+          dlc ? "DLC" : "classic, disc", (double)time_base() / 60750);
   return 1;
 }
 
@@ -314,8 +332,9 @@ int jd2015_probe_direct(void) {
   dispatch(port->make_string);  // String8(const char *)
   cpu.r[3] = database;
   cpu.r[4] = string;
-  cpu.r[5] = SONG_MODE_CLASSIC;
-  cpu.r[6] = SONG_VERSION_DISC;
+  unsigned dlc = dlc_index();
+  cpu.r[5] = dlc ? SONG_MODE_ANY : SONG_MODE_CLASSIC;
+  cpu.r[6] = dlc ? SONG_VERSION_DLC : SONG_VERSION_DISC;
   cpu.r[7] = UINT32_MAX;
   dispatch(port->get_song);
   selected_entry = cpu.r[3];
@@ -323,6 +342,8 @@ int jd2015_probe_direct(void) {
   cpu.r[4] = UINT32_MAX;
   dispatch(port->destroy_string);  // ~String8()
   if (!selected_entry) {
+    cpu = saved;
+    if (dlc && waiting_for_dlc()) return 0;
     fprintf(stderr, "probe: %s missing from the original song database\n", requested_map);
     exit(2);
   }
@@ -336,7 +357,7 @@ int jd2015_probe_direct(void) {
   dispatch(port->set_song);
   cpu = saved;
   if (port->direct_flag_offset) wr32(manager + port->direct_flag_offset, 1);
-  fprintf(stderr, "probe: queued %s (classic, disc)\n", requested_map);
+  fprintf(stderr, "probe: queued %s (%s)\n", requested_map, dlc ? "DLC" : "classic, disc");
   return 1;
 }
 
@@ -453,7 +474,10 @@ void jd3_probe_lobby_update(void) {
   if (!jd3_lobby || cpu.r[3] != jd3_lobby || jd3_continued) return;
   if (!guest_call(jd3_code + JD3_LOBBY_READY, jd3_lobby)) return;
   jd3_continued = guest_call(jd3_code + JD3_LOBBY_CONTINUE, jd3_lobby);
-  if (jd3_continued) fprintf(stderr, "probe: selected the original JD3 lobby Continue action\n");
+  if (jd3_continued) {
+    if (dlc_index()) time_boot_finish();
+    fprintf(stderr, "probe: selected the original JD3 lobby Continue action\n");
+  }
 }
 
 int jd3_probe_first_lobby_completion(void) {
@@ -473,17 +497,20 @@ void jd3_probe_hud_entered(void) {
 void jd3_probe_game_started(void) {
   if (!jd3_lobby_complete) return;
   fprintf(stderr, "probe: original JD3 gameplay started\n");
+  if (dlc_index() && jd_couch_gameplay_ready) jd_couch_gameplay_ready();
 }
 
 void jd3_probe_score(void) {
   if (!jd3_lobby_complete || jd3_scoring) return;
   jd3_scoring = 1;
   fprintf(stderr, "probe: original JD3 gameplay emitted its first move score %.6f\n", cpu.f[1]);
+  if (dlc_index() && jd_couch_game_event) jd_couch_game_event(0);
 }
 
 void jd3_probe_recap(void) {
   if (!jd3_scoring) return;
   fprintf(stderr, "probe: original JD3 scoreboard entered\n");
+  if (dlc_index() && jd_couch_game_event) jd_couch_game_event(1);
 }
 
 enum {

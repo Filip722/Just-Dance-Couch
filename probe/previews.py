@@ -20,23 +20,29 @@ FRAME_BYTES = PREVIEW_WIDTH * PREVIEW_HEIGHT * 3
 
 def archive_entries(folder):
     for archive in sorted(folder.glob("*.ipk")):
-        if not archive.name.lower().startswith("bundle"):
-            continue
-        with archive.open("rb") as source:
-            magic, version, _, base, count = struct.unpack(">5I", source.read(20))
-            if (magic, version) != (0x50EC12BA, 5):
-                raise ValueError(f"Unexpected Wii archive {archive}")
-            limit = archive.stat().st_size
-            source.seek(48)
-            for _ in range(count):
-                _, size, packed, _, offset, length = struct.unpack(">IIIQQI", source.read(32))
-                first = source.read(length)
-                length, = struct.unpack(">I", source.read(4))
-                second = source.read(length)
-                source.read(8)
-                directory, name = (first, second) if first.endswith(b"/") else (second, first)
-                if not packed and base + offset + size <= limit and size:
-                    yield directory.lower(), name.lower(), (archive, base + offset, size)
+        if archive.name.lower().startswith("bundle"):
+            yield from ipk_entries((archive, 0, archive.stat().st_size))
+
+
+def ipk_entries(entry):
+    archive, start, limit = entry
+    with archive.open("rb") as source:
+        source.seek(start)
+        magic, version, _, base, count = struct.unpack(">5I", source.read(20))
+        if (magic, version) != (0x50EC12BA, 5) or not 48 <= base <= limit:
+            raise ValueError(f"Unexpected Wii archive {archive}")
+        source.seek(start + 48)
+        for _ in range(count):
+            _, size, packed, _, offset, length = struct.unpack(">IIIQQI", source.read(32))
+            first = source.read(length)
+            length, = struct.unpack(">I", source.read(4))
+            second = source.read(length)
+            source.read(8)
+            if source.tell() > start + base:
+                raise ValueError(f"Invalid Wii archive table in {archive}")
+            directory, name = (first, second) if first.endswith(b"/") else (second, first)
+            if not packed and base + offset + size <= limit and size:
+                yield directory.lower(), name.lower(), (archive, start + base + offset, size)
 
 
 def read_entry(entry):

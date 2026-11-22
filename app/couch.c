@@ -114,9 +114,10 @@ static int start_worker(Browser *browser) {
   int error = posix_spawn_file_actions_init(&actions);
   if (!error) {
     error = posix_spawn_file_actions_adddup2(&actions, sockets[1], WORKER_SOCKET);
-    char socket_number[12];
+    char socket_number[12], dlc_row[12];
     snprintf(socket_number, sizeof socket_number, "%d", WORKER_SOCKET);
-    char *arguments[] = {browser->program, "--worker", (char *)disc, "-",
+    snprintf(dlc_row, sizeof dlc_row, "%d", browser->row);
+    char *arguments[] = {browser->program, "--worker", disc ? (char *)disc : "DLC", disc ? "-" : dlc_row,
                          socket_number, browser->loopback ? "loopback" : "remote", NULL};
     if (!error) error = posix_spawn(&browser->worker, browser->program, &actions, NULL, arguments, environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -152,7 +153,7 @@ static void start_dance(Browser *browser) {
   }
   song_grid_preview(browser->grid, browser->edition, -1);
   uint8_t row = browser->row;
-  if (!session_send(browser->socket, SELECT_SONG, &row, sizeof row)) {
+  if (editions[browser->edition].disc && !session_send(browser->socket, SELECT_SONG, &row, sizeof row)) {
     browser->status = "Could not start playback";
     return;
   }
@@ -181,7 +182,7 @@ static void change_edition(Browser *browser, int step) {
   if (edition < 0 || edition >= edition_count) return;
   browser->edition = edition;
   browser->row = browser->first_row = 0;
-  browser->warm_next = 1;
+  browser->warm_next = editions[edition].disc != NULL;
   if (browser->worker) end_dance(browser, CANCELLED);
 }
 
@@ -347,7 +348,7 @@ static void update_worker(Browser *browser) {
     return;
   }
   browser->active = 0;
-  browser->warm_next = browser->reason != RUNNING;
+  browser->warm_next = browser->reason != RUNNING && editions[browser->edition].disc != NULL;
   browser->release_required = 1;
   if (browser->reason == COMPLETED) browser->status = "Dance complete";
   else if (browser->reason == CANCELLED) browser->status = "Dance cancelled";

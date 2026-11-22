@@ -120,7 +120,9 @@ static int preview_path(char *path, const SongGrid *grid, const Edition *edition
   char key[32];
   SDL_strlcpy(key, song->map, sizeof key);
   SDL_strlwr(key);
-  int length = snprintf(path, PATH_MAX, "%s/previews/%s/%s.%s", grid->cache, edition->disc, key, extension);
+  int length = song->pack
+      ? snprintf(path, PATH_MAX, "%s/dlc/%s/previews/%s.%s", grid->cache, song->pack, key, extension)
+      : snprintf(path, PATH_MAX, "%s/previews/%s/%s.%s", grid->cache, edition->disc, key, extension);
   return length > 0 && length < PATH_MAX ? length : 0;
 }
 
@@ -360,7 +362,14 @@ void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
     }
     float title_line = slot.y + (thumbnail || video ? TILE_MEDIA_HEIGHT + 22 : slot.h / 2);
     text_fit(grid, TILE, song->title, slot.x + 13, title_line, slot.w - 26, white);
-    text_fit(grid, DETAIL, song->artist, slot.x + 13, title_line + 22, slot.w - 26, muted);
+    const char *detail = song->artist;
+    char from[128];
+    if (song->disc) {
+      const Edition *source = edition_for_disc(song->disc);
+      snprintf(from, sizeof from, "%s · %s", source->title, song->artist);
+      detail = from;
+    }
+    text_fit(grid, DETAIL, detail, slot.x + 13, title_line + 22, slot.w - 26, muted);
   }
   int total_rows = (page->count + GRID_COLUMNS - 1) / GRID_COLUMNS;
   if (total_rows > GRID_ROWS) {

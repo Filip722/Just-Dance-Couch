@@ -14,8 +14,9 @@ import tarfile
 import tempfile
 from urllib.request import urlretrieve
 
-from probe import gh, jd1, jd2, jd3, jd4
+from probe import dlc, gh, jd1, jd2, jd3, jd4
 from probe.collection import EDITIONS, catalog, write_catalog
+from probe.dlc_lyn import JD2_DLC_SLOT_OFFSETS, JD4_DLC_CHOREOGRAPHY, LYN_DLC
 from probe.instrument import (
     fix_jd2_bigfile, instrument, instrument_jd3,
 )
@@ -194,6 +195,11 @@ def prepare_probe_adapter():
         slots = "\n".join(f"  {{0x{key}u, {offset}, {slot}u, 0x{asset}u}},"
                           for key, _, _, _, slot, offset, asset, *_ in songs)
         selection = selection.replace(placeholder, slots)
+    jd2_downloads = "\n".join(f"  {{0x{key}u, {offset}, {100 + index}u, 0}},"
+                               for (index, key, *_), offset in zip(LYN_DLC["SD2Y41"], JD2_DLC_SLOT_OFFSETS, strict=True))
+    jd4_downloads = "\n".join(f"  {{0x{key}u, 0, 0, 0x{asset}u}},"
+                               for (_, key, *_), asset in zip(LYN_DLC["SJXE41"], JD4_DLC_CHOREOGRAPHY, strict=True))
+    selection = selection.replace("JD2_DLC_SLOTS", jd2_downloads).replace("JD4_DLC_SLOTS", jd4_downloads)
     content = (folder / "jd2014.c").read_text() + "\n" + selection + "\n" + (folder / "lyn_classic.inc").read_text()
     if not adapter.exists() or adapter.read_text() != content:
         adapter.write_text(content)
@@ -277,7 +283,7 @@ def link_command(folder, target, env):
     return command[0], command[1:output], command[output + 2:]
 
 
-def build_couch(jobs):
+def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
     prepare_upstream()
     env = build_environment()
     for disc_id in EMBEDDED_TITLES:
@@ -323,6 +329,7 @@ def build_couch(jobs):
             instrument(title_build / "generated", disc_id)
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
 
+    dlc_songs = dlc.prepare_dlc(dlc_directory, CACHE / "dlc", CACHE / "discs", jobs)
     console = RUNTIME / "build"
     subprocess.run(["ninja", "-j", str(jobs), "wii-recomp"], cwd=console, env=env, check=True)
     clang, runtime_objects, link_flags = link_command(console, "wii-recomp", env)
@@ -335,7 +342,7 @@ def build_couch(jobs):
     output_folder.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=CACHE) as temp:
         staging = Path(temp)
-        write_catalog(staging, collection)
+        write_catalog(staging, collection, dlc_songs)
         registry = staging / "collection_titles.c"
         declarations = "\n".join(f"extern const Title {symbol};" for symbol in EMBEDDED_TITLES.values())
         lookups = "\n".join(f'  if (!strcmp(path, "builtin:{disc}")) return &{symbol};'
@@ -392,6 +399,7 @@ def main():
     compiler.add_argument("--jobs", type=int, default=6)
     couch = commands.add_parser("couch", help="link the built titles and the browser into one executable")
     couch.add_argument("--jobs", type=int, default=6)
+    couch.add_argument("--dlc-dir", type=Path, default=BACKUPS / "DLC", help="directory of owned Wii add-on WADs")
     runner = commands.add_parser("boot", help="run a title in strict-native mode")
     runner.add_argument("--song", help="probe a verified game and song key")
     runner.add_argument("--fresh", action="store_true", help="use a new isolated save directory")
@@ -406,7 +414,7 @@ def main():
             with (CACHE / "build.lock").open("a") as lock:
                 flock(lock, LOCK_EX)
                 if args.command == "couch":
-                    build_couch(args.jobs)
+                    build_couch(args.jobs, args.dlc_dir.expanduser())
                 else:
                     image = args.image or BACKUPS / DISCS[args.disc][0]
                     build(args.disc, image.expanduser().resolve(strict=True), args.jobs)

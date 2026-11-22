@@ -29,6 +29,12 @@ JD3_SONG_SLOTS
 static const Jd2SongSlot jd4_song_slots[] = {
 JD4_SONG_SLOTS
 };
+static const Jd2SongSlot jd2_dlc_slots[] = {
+JD2_DLC_SLOTS
+};
+static const Jd2SongSlot jd4_dlc_slots[] = {
+JD4_DLC_SLOTS
+};
 
 typedef struct {
   const char *name;
@@ -79,6 +85,7 @@ static const Jd2Edition jd2_editions[] = {
 static const Jd2Edition *jd2_edition;
 static const Jd2SongSlot *jd2_song;
 static int jd2_catalog_ready, jd2_title_ready, jd2_map_seen, jd2_playing, jd2_recap_seen;
+static int jd2_download_slot_ready;
 static uint64_t jd2_menu_ready;
 
 static const Jd2Edition *jd2_title_edition(void) {
@@ -93,9 +100,17 @@ static const Jd2SongSlot *jd2_requested_song(void) {
   if (!map) return NULL;
   char *end;
   unsigned long key = strtoul(map, &end, 16);
-  for (size_t i = 0; map != end && !*end && i < jd2_edition->count; i++) {
-    if (jd2_edition->slots[i].key == key) {
-      jd2_song = &jd2_edition->slots[i];
+  const Jd2SongSlot *slots = jd2_edition->slots;
+  size_t count = jd2_edition->count;
+  if (dlc_index()) {
+    switch (jd2_edition->title_low) {
+      case JD2_TITLE_LOW: slots = jd2_dlc_slots; count = sizeof jd2_dlc_slots / sizeof *jd2_dlc_slots; break;
+      case JD4_TITLE_LOW: slots = jd4_dlc_slots; count = sizeof jd4_dlc_slots / sizeof *jd4_dlc_slots; break;
+    }
+  }
+  for (size_t i = 0; map != end && !*end && i < count; i++) {
+    if (slots[i].key == key) {
+      jd2_song = &slots[i];
       return jd2_song;
     }
   }
@@ -105,12 +120,29 @@ static const Jd2SongSlot *jd2_requested_song(void) {
 
 void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
   if (jd2_catalog_ready) return;
+  if (dlc_index() && title->title_low == SJDE41_TITLE_LOW) return;
   if (!jd2_edition) jd2_edition = jd2_title_edition();
+  if (dlc_index() && title->title_low == JD2_TITLE_LOW && bytes == 40799 &&
+      rd32(buffer) == 0xca0a808cu && rd32(buffer + 4) == 0xfa030000u && jd2_requested_song()) {
+    uint32_t slot = buffer + jd2_song->slot_offset;
+    if (rd32(slot) == __builtin_bswap32(jd2_song->slot)) {
+      wr32(slot, __builtin_bswap32(jd2_edition->first_slot));
+      jd2_download_slot_ready = 1;
+    }
+    return;
+  }
   if (!jd2_edition || bytes != jd2_edition->catalog_bytes) return;
   // The first two words identify the original catalog's world record.
   if (rd32(buffer) != 0x6a0e808cu || rd32(buffer + 4) != jd2_edition->catalog_signature ||
       !jd2_requested_song()) return;
   uint32_t first = buffer + jd2_edition->first_slot_offset;
+  if (dlc_index()) {
+    if (!jd2_download_slot_ready || rd32(first) != __builtin_bswap32(jd2_edition->first_slot)) return;
+    wr32(first, __builtin_bswap32(jd2_song->slot));
+    jd2_catalog_ready = 1;
+    fprintf(stderr, "probe: selected %s DLC slot for %08x\n", jd2_edition->name, jd2_song->key);
+    return;
+  }
   uint32_t selected = buffer + jd2_song->slot_offset;
   uint32_t first_slot = rd32(first), selected_slot = rd32(selected);
   if (first_slot != __builtin_bswap32(jd2_edition->first_slot) ||
@@ -179,6 +211,12 @@ void jd2_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_
 
 void jd2_probe_map(void) {
   if (!jd2_catalog_ready || jd2_map_seen || cpu.lr != jd2_edition->load_group_caller) return;
+  if (dlc_index() && cpu.r[4] == jd2_song->key) {
+    time_boot_finish();
+    jd2_map_seen = 1;
+    fprintf(stderr, "probe: original map loader requested %08x\n", jd2_song->key);
+    return;
+  }
   for (size_t i = 0; i < jd2_edition->count; i++) {
     if (jd2_edition->slots[i].key != cpu.r[4]) continue;
     if (cpu.r[4] != jd2_song->key) {

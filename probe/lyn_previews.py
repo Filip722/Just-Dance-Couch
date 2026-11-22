@@ -13,13 +13,14 @@ LYN_DSP_COEFFICIENTS = struct.unpack(
 )
 
 
-def entries(archive):
+def entries(archive, start=0):
     with archive.open("rb") as source:
+        source.seek(start)
         header = source.read(28)
         if header[:8] != b"ABE\0\x05\0\0\0":
             raise ValueError(f"Unexpected LyN archive {archive}")
         table, = struct.unpack_from("<I", header, 24)
-        source.seek(table)
+        source.seek(start + table)
         count, = struct.unpack_from("<I", source.read(12))
         for _ in range(count):
             record = source.read(200)
@@ -29,13 +30,14 @@ def entries(archive):
             high, low = struct.unpack_from("<II", record, 0x68)
             encoded, = struct.unpack_from("<I", record, 0x58)
             if name and encoded > 32:
-                yield name.lower(), (archive, (high << 32 | low) + 32, encoded - 32)
+                yield name.lower(), (archive, start + (high << 32 | low) + 32, encoded - 32)
 
 
 def raw_stream(alias, streams):
-    target = read_entry(alias).split(b"\0", 1)[0]
-    if not target.startswith(b"<$shadow$>/"):
-        raise ValueError("Expected a LyN media shadow")
+    data = read_entry(alias)
+    if not data.startswith(b"<$shadow$>/"):
+        return data
+    target = data.split(b"\0", 1)[0]
     return read_entry(streams[target.rsplit(b"/", 1)[1].replace(b".$hd$", b"").lower()])
 
 
@@ -86,8 +88,11 @@ def mobiclip_packets(movie):
 
 
 def prepare_preview(key, destination, audio, video, media):
-    cue, rate, samples = audio_clip(raw_stream(audio, media))
-    movie = raw_stream(video, media)
+    write_lyn_clip(key, destination, raw_stream(audio, media), raw_stream(video, media))
+
+
+def write_lyn_clip(key, destination, audio, movie):
+    cue, rate, samples = audio_clip(audio)
     if movie.startswith(b"MOC5"):
         write_preview(key, destination, cue, rate, samples, mobiclip_packets(movie), seek_before_input=False)
     elif movie.startswith(b"BIK"):

@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "song_grid.h"
 
 // Disc song descriptors with their own local audio, from SJOE41 and SE3E41.
@@ -113,5 +115,14 @@ const Edition editions[] = {
   EDITION_SZ7E41,
   EDITION_SE8E41,
   EDITION_S5EE41,
+#ifdef EDITION_DLC
+  EDITION_DLC,
+#endif
 };
 const int edition_count = sizeof editions / sizeof editions[0];
+
+const Edition *edition_for_disc(const char *disc) {
+  for (int i = 0; i < edition_count; i++)
+    if (editions[i].disc && !strcmp(editions[i].disc, disc)) return &editions[i];
+  return NULL;
+}
