@@ -8,7 +8,6 @@ static int gh_movie_confirmed, gh_movie_visible, gh_recap, jd4_scene_confirmed;
 void gh_probe_video_frame(void);
 
 void gh_probe_track(void) {
-  if (dlc_index() && title->title_low == SJDE41_TITLE_LOW) return;
   if ((!couch_booting() && !jd2_song && !getenv("JD2_PROBE_MAP")) || gh_recap) return;
   if (!jd2_edition) jd2_edition = jd2_title_edition();
   const char *track = (const char *)host(cpu.r[3] + 8);
@@ -42,9 +41,10 @@ void gh_probe_track(void) {
   if (!strcmp(track, "LevelManager_trk_GameLoop")) {
     time_boot_finish();
     next = GH_DANCE;
-    if (jd4) {
-      if (!jd4_scene_confirmed) {
-        fprintf(stderr, "probe: Just Dance 4 did not load the choreography for map %08x\n", jd2_song->key);
+    int jd3_download = jd2_edition->title_low == SJDE41_TITLE_LOW && dlc_index();
+    if (jd4 || jd3_download) {
+      if (!(jd4 ? jd4_scene_confirmed : jd2_map_seen)) {
+        fprintf(stderr, "probe: %s did not load the choreography for map %08x\n", jd2_edition->name, jd2_song->key);
         exit(2);
       }
       gh_movie_confirmed = 1;
@@ -71,18 +71,12 @@ void gh_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_t
   unsigned settle = gh_stage == GH_CAROUSEL ? CAROUSEL_SETTLE_MS : MENU_SETTLE_MS;
   if (gh_stage == GH_TITLE) settle = 0;
   int jd4 = jd2_edition->title_low == JD4_TITLE_LOW;
-  int greatest_hits = jd2_edition->title_low == GH_TITLE_LOW;
   uint32_t held = 0;
   if (!jd4 && gh_stage == GH_CAROUSEL && elapsed >= FIRST_CARD_MS) {
-    unsigned press_at = FIRST_CARD_MS;
-    if (greatest_hits) {
-      // Send the move on the first available sample and let the card settle
-      // from that point even if the remote paused during the usual window.
-      if (!gh_first_card_at) gh_first_card_at = elapsed;
-      press_at = gh_first_card_at;
-      settle += press_at - FIRST_CARD_MS;
-    }
-    if (elapsed - press_at < RIGHT_HELD_MS) held = BUTTON_RIGHT;
+    // Start the move and its settling time from the first available sample.
+    if (!gh_first_card_at) gh_first_card_at = elapsed;
+    if (elapsed - gh_first_card_at < RIGHT_HELD_MS) held = BUTTON_RIGHT;
+    settle += gh_first_card_at - FIRST_CARD_MS;
   }
   if (elapsed >= settle && (elapsed - settle) % JD1_CONFIRM_PERIOD_MS < CONFIRM_HELD_MS)
     held = BUTTON_A;
@@ -106,8 +100,8 @@ void gh_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_t
   if (!jd4 && gh_stage == GH_LOBBY) y = 0.76f;
 
   static uint32_t previous;
-  // Greatest Hits' hidden menu sequence owns navigation until the dance starts.
-  const uint32_t menu_buttons = greatest_hits ? UINT32_MAX : BUTTON_A | BUTTON_RIGHT;
+  // The scripted Just Dance 3 and Greatest Hits menus own navigation until the dance starts.
+  const uint32_t menu_buttons = jd4 ? (BUTTON_A | BUTTON_RIGHT) : UINT32_MAX;
   for (uint32_t i = 0; i < count && i < JD2_KPAD_MAX_SAMPLES; i++) {
     uint32_t pad = buffer + i * JD2_KPAD_STATUS_BYTES;
     wr32(pad + JD1_KPAD_HOLD, (rd32(pad + JD1_KPAD_HOLD) & ~menu_buttons) | held);

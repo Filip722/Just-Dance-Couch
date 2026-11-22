@@ -32,6 +32,9 @@ JD4_SONG_SLOTS
 static const Jd2SongSlot jd2_dlc_slots[] = {
 JD2_DLC_SLOTS
 };
+static const Jd2SongSlot jd3_dlc_slots[] = {
+JD3_DLC_SLOTS
+};
 static const Jd2SongSlot jd4_dlc_slots[] = {
 JD4_DLC_SLOTS
 };
@@ -105,6 +108,7 @@ static const Jd2SongSlot *jd2_requested_song(void) {
   if (dlc_index()) {
     switch (jd2_edition->title_low) {
       case JD2_TITLE_LOW: slots = jd2_dlc_slots; count = sizeof jd2_dlc_slots / sizeof *jd2_dlc_slots; break;
+      case SJDE41_TITLE_LOW: slots = jd3_dlc_slots; count = sizeof jd3_dlc_slots / sizeof *jd3_dlc_slots; break;
       case JD4_TITLE_LOW: slots = jd4_dlc_slots; count = sizeof jd4_dlc_slots / sizeof *jd4_dlc_slots; break;
     }
   }
@@ -118,6 +122,26 @@ static const Jd2SongSlot *jd2_requested_song(void) {
   exit(2);
 }
 
+static void jd3_unlock_catalog_bonuses(uint32_t buffer) {
+  // Keep these on-disc routines in Classic by clearing their Mojo bonus keys.
+  // Each ma_BonusProperties entry contains the Mojo level, map key and reward type.
+  static const char bonus_properties[] = "ma_BonusProperties";
+  static const struct { uint32_t offset, key, mojo; } bonuses[] = {
+    {0x6c0c, 0x2dc08999u, 2},   // Baby Zouk
+    {0x6c74, 0x2dc08a17u, 12},  // Mamasita
+    {0x6cdc, 0x2dc0895au, 22},  // The Master Blaster
+    {0x6d10, 0x2dc0f7b7u, 27},  // Hungarian Dance No. 5
+  };
+  const char *name = (const char *)host(buffer + 0x6b94);
+  if (!name || memcmp(name, bonus_properties, sizeof bonus_properties)) return;
+  for (size_t i = 0; i < sizeof bonuses / sizeof *bonuses; i++) {
+    uint32_t map = buffer + bonuses[i].offset;
+    if (rd32(map) == __builtin_bswap32(bonuses[i].key) &&
+        rd32(map - 4) == __builtin_bswap32(bonuses[i].mojo) && rd32(map + 4) == 0x01000000u)
+      wr32(map, 0);
+  }
+}
+
 void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
   // Greatest Hits hides two on-disc routines behind title-screen codes.
   // Let the native bonus check accept them in the worker that launches one.
@@ -125,6 +149,7 @@ void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
     GH_BABY_GIRL = 0x76c053e8u, GH_KATTI_KALANDAL = 0x76c05471u,
     GH_BONUS_SCRIPT_BYTES = 144697, GH_BONUS_UNLOCK_METHOD = 54689,
     GH_BONUS_LOCKED_RETURN = 55173,
+    JD3_BONUS_BLOCK_BYTES = 0x3fffc, JD3_DLC_CATALOG_BYTES = 75017,
   };
   if (title->title_low == GH_TITLE_LOW && bytes == GH_BONUS_SCRIPT_BYTES && jd2_song &&
       (jd2_song->key == GH_BABY_GIRL || jd2_song->key == GH_KATTI_KALANDAL)) {
@@ -137,9 +162,27 @@ void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
       wr8(locked + 6, 1);
     return;
   }
+  if (title->title_low == SJDE41_TITLE_LOW) {
+    if (dlc_index()) {
+      if (jd2_catalog_ready && !jd2_map_seen && bytes >= 4 &&
+          rd32(buffer) == __builtin_bswap32(jd2_song->asset_key)) {
+        jd2_map_seen = 1;
+        fprintf(stderr, "probe: original Just Dance 3 DLC choreography confirmed for map %08x\n", jd2_song->key);
+      }
+    } else if (bytes == JD3_BONUS_BLOCK_BYTES && rd32(buffer) == 0x53993109u &&
+               rd32(buffer + 4) == 0xda040000u && (couch_booting() || getenv("JD2_PROBE_MAP"))) {
+      // This world can load before the picker has received a selection.
+      jd3_unlock_catalog_bonuses(buffer);
+      return;
+    }
+  }
   if (jd2_catalog_ready) return;
-  if (dlc_index() && title->title_low == SJDE41_TITLE_LOW) return;
   if (!jd2_edition) jd2_edition = jd2_title_edition();
+  if (dlc_index() && title->title_low == SJDE41_TITLE_LOW && bytes == JD3_DLC_CATALOG_BYTES &&
+      rd32(buffer) == 0x365e80c4u && rd32(buffer + 4) == 0x92040000u && jd2_requested_song()) {
+    jd2_download_slot_ready = rd32(buffer + jd2_song->slot_offset) == __builtin_bswap32(jd2_song->slot);
+    return;
+  }
   if (dlc_index() && title->title_low == JD2_TITLE_LOW && bytes == 40799 &&
       rd32(buffer) == 0xca0a808cu && rd32(buffer + 4) == 0xfa030000u && jd2_requested_song()) {
     uint32_t slot = buffer + jd2_song->slot_offset;

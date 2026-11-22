@@ -310,10 +310,8 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
     // The direct loaders and the older on-disc menus tolerate different boot rates.
     boot_rate = map_variable ? 6 : 3;
     if (!strcmp(disc, "SJXE41")) boot_rate = 8;
-    if (add_on && !strcmp(disc, "SJDE41")) boot_rate = 3;
   }
   if (!map_variable) map_variable = "JD2014_PROBE_MAP";
-  if (add_on && !strcmp(disc, "SJDE41")) map_variable = "JD3_PROBE_MAP";
   if (map && strcmp(map, "-")) setenv(map_variable, map, 1);
   else unsetenv(map_variable);
   char *arguments[] = {program, sys, add_on ? nand : NULL, NULL};

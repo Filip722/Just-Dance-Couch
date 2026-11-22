@@ -16,7 +16,7 @@ from urllib.request import urlretrieve
 
 from probe import dlc, gh, jd1, jd2, jd3, jd4
 from probe.collection import EDITIONS, catalog, write_catalog
-from probe.dlc_lyn import JD2_DLC_SLOT_OFFSETS, JD4_DLC_CHOREOGRAPHY, LYN_DLC
+from probe.dlc_lyn import JD2_DLC_SLOT_OFFSETS, JD3_DLC_SLOTS, JD4_DLC_CHOREOGRAPHY, LYN_DLC
 from probe.instrument import (
     fix_jd2_bigfile, instrument, instrument_jd3,
 )
@@ -201,9 +201,13 @@ def prepare_probe_adapter():
         selection = selection.replace(placeholder, slots)
     jd2_downloads = "\n".join(f"  {{0x{key}u, {offset}, {100 + index}u, 0}},"
                                for (index, key, *_), offset in zip(LYN_DLC["SD2Y41"], JD2_DLC_SLOT_OFFSETS, strict=True))
+    jd3_downloads = "\n".join(f"  {{0x{key}u, {offset}, 0x{node}u, 0x{asset}u}},"
+                               for (_, key, *_), (offset, node, asset) in
+                               zip(LYN_DLC["SJDE41"], JD3_DLC_SLOTS, strict=True))
     jd4_downloads = "\n".join(f"  {{0x{key}u, 0, 0, 0x{asset}u}},"
                                for (_, key, *_), asset in zip(LYN_DLC["SJXE41"], JD4_DLC_CHOREOGRAPHY, strict=True))
-    selection = selection.replace("JD2_DLC_SLOTS", jd2_downloads).replace("JD4_DLC_SLOTS", jd4_downloads)
+    selection = selection.replace("JD2_DLC_SLOTS", jd2_downloads)
+    selection = selection.replace("JD3_DLC_SLOTS", jd3_downloads).replace("JD4_DLC_SLOTS", jd4_downloads)
     content = (folder / "jd2014.c").read_text() + "\n" + selection + "\n" + (folder / "lyn_classic.inc").read_text()
     if not adapter.exists() or adapter.read_text() != content:
         adapter.write_text(content)

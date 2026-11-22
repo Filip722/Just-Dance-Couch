@@ -425,6 +425,7 @@ static int jd3_map_confirmed, jd3_continued, jd3_lobby_complete, jd3_scoring;
 void jd3_probe_enable_compiled_scripts(void) {
   if (title->title_low != SJDE41_TITLE_LOW || title->program_check != 0x3f798cb17a63269dull)
     return;
+  if (dlc_index()) return;
   requested_map = getenv("JD3_PROBE_MAP");
   if (requested_map) wr32(cpu.r[13] - JD3_COMPILED_SCRIPTS_SDA_OFFSET, 1);
 }
