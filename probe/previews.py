@@ -110,7 +110,7 @@ def decode_dsp_clip(data, rate, coefficients, start):
     return samples
 
 
-def write_preview(key, destination, cue, rate, samples, video):
+def write_preview(key, destination, cue, rate, samples, video, *, seek_before_input=True):
     with tempfile.TemporaryDirectory(dir=destination) as staging:
         staging = Path(staging)
         wav = staging / "preview.wav"
@@ -121,9 +121,11 @@ def write_preview(key, destination, cue, rate, samples, video):
         if video:
             source, rgb = staging / "coach", staging / "preview.rgb"
             source.write_bytes(video)
+            seek = ["-ss", str(cue)]
             args = [
-                "ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-ss", str(cue),
-                "-i", str(source), "-an", "-filter_threads", "1",
+                "ffmpeg", "-v", "error", "-nostdin", "-threads", "1",
+                *(seek if seek_before_input else []), "-i", str(source),
+                *(seek if not seek_before_input else []), "-an", "-filter_threads", "1",
                 "-vf", f"fps={PREVIEW_FPS},scale={PREVIEW_WIDTH}:{PREVIEW_HEIGHT}",
                 "-frames:v", str(PREVIEW_SECONDS * PREVIEW_FPS), "-threads", "1",
                 "-pix_fmt", "rgb24", "-f", "rawvideo", str(rgb),

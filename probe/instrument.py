@@ -104,6 +104,14 @@ JD2_ADDRESSES = {
 }
 
 
+# SCR track runner, LZO exit, KPAD return, coach open, and first decoded frame.
+LYN_CLASSIC_ADDRESSES = {
+    "SJHE41": ("800ee7cc", "800237a0", "80023b24", "803a28e0", "803a30cc", "802da93c", "803b0030"),
+    "SJDE41": ("800fdf40", "8002aadc", "8002ae60", "803d0450", "803d0c3c", "80306074", "803ddd90"),
+    "SJXE41": ("8013db14", "800624d8", "8006285c", "80425cc0", "804264ac", None, None),
+}
+
+
 def instrument(directory, disc="SJOE41"):
     sites = JD1_SITES.copy() if disc == "SDNE41" else {}
     if disc in JD2_ADDRESSES:
@@ -131,21 +139,25 @@ def instrument(directory, disc="SJOE41"):
             f"wr32((cpu.r[26] + cpu.r[31]), double_to_single(cpu.f[{register}]));",
             "wr32((cpu.r[26] + cpu.r[31]), cpu.r[3]);",
         )
-    elif disc == "SJHE41":
-        pending = {
-            "800ee7cc": "extern void gh_probe_track(void); gh_probe_track();",
-            "802da93c": "extern void gh_probe_movie(void); gh_probe_movie();",
-            "803b0030": "extern void gh_probe_video_frame(void); gh_probe_video_frame();",
-        }
-        sites["800237a0"] = (
-            "L_80023b24:;",
-            "L_80023b24:;\n"
-            " extern void jd2_probe_catalog(uint32_t, uint32_t);\n"
-            " if (cpu.r[26] && cpu.r[27]) jd2_probe_catalog(cpu.r[26], rd32(cpu.r[27]));",
+    elif disc in LYN_CLASSIC_ADDRESSES:
+        track, decode, decode_return, read_pad, pad_return, open_movie, frame = LYN_CLASSIC_ADDRESSES[disc]
+        pending = {track: "extern void gh_probe_track(void); gh_probe_track();"}
+        if disc == "SJXE41":
+            pending["800716f0"] = "extern void jd4_probe_scene(void); jd4_probe_scene();"
+            catalog = "jd4_probe_album"
+        else:
+            pending[open_movie] = "extern void gh_probe_movie(void); gh_probe_movie();"
+            pending[frame] = "extern void gh_probe_video_frame(void); gh_probe_video_frame();"
+            catalog = "jd2_probe_catalog"
+        sites[decode] = (
+            f"L_{decode_return}:;",
+            f"L_{decode_return}:;\n"
+            f" extern void {catalog}(uint32_t, uint32_t);\n"
+            f" if (cpu.r[26] && cpu.r[27]) {catalog}(cpu.r[26], rd32(cpu.r[27]));",
         )
-        sites["803a28e0"] = (
-            "L_803a30cc:;",
-            "L_803a30cc:;\n"
+        sites[read_pad] = (
+            f"L_{pad_return}:;",
+            f"L_{pad_return}:;\n"
             " extern void gh_probe_input(uint32_t, uint32_t, uint32_t, uint32_t);\n"
             " gh_probe_input(rd32s(cpu.r[1] + 580), cpu.r[25], cpu.r[26], cpu.r[29]);",
         )
@@ -266,7 +278,7 @@ JD3_HOOKS = {
 
 
 def instrument_jd3(directory):
-    fix_lyn_stream_wait(directory, "SJDE41")
+    instrument(directory, "SJDE41")
     pending = JD3_HOOKS.copy()
     transitions = JD3_TRANSITIONS.copy()
     enabled = completion = False

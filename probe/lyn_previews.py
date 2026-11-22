@@ -1,4 +1,4 @@
-"""Read the local Just Dance 3 coach and audio streams from LyN archives."""
+"""Read local coach and audio streams from LyN Wii archives."""
 
 from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
@@ -6,8 +6,6 @@ import struct
 
 from probe.previews import decode_dsp_clip, read_entry, write_preview
 
-
-JD3_SONGS = {"2dc0e3f1": "PumpIt", "2dc0bf8b": "TakeOnMe"}
 
 # The LyN Wii RIFF codec 0x5050 uses fixed Nintendo DSP coefficients.
 LYN_DSP_COEFFICIENTS = struct.unpack(
@@ -60,15 +58,45 @@ def audio_clip(audio):
     return cue, rate, samples
 
 
+def mobiclip_packets(movie):
+    # FFmpeg decodes MobiClip video through its MODS demuxer. Keep the Wii
+    # video packets and use a video-only MODS header to pass them through.
+    end = 8 + struct.unpack_from("<I", movie, 4)[0]
+    offset = 8
+    tags = {}
+    while offset < end:
+        tag, words = struct.unpack_from("<2sH", movie, offset)
+        offset += 4
+        tags[tag] = movie[offset:offset + words * 4]
+        offset += words * 4
+    if offset != end or b"HE" not in tags:
+        raise ValueError("Invalid Wii MobiClip header")
+    fps, frames = struct.unpack_from("<II", tags[b"TL"])
+    width, height = struct.unpack_from("<II", tags[b"V2"])
+    packets = bytearray(b"MODSN3\x0a\0" + struct.pack("<4I16x2I", frames, width, height, fps << 16, 40, 48))
+    for _ in range(frames):
+        chunk_bytes, video_bytes = struct.unpack_from("<II", movie, offset)
+        if not 0 < video_bytes <= chunk_bytes - 4 or offset + 8 + video_bytes > len(movie):
+            raise ValueError("Invalid Wii MobiClip frame")
+        packets += struct.pack("<I", video_bytes << 14)
+        packets += movie[offset + 8:offset + 8 + video_bytes]
+        offset += chunk_bytes
+        offset += 4 - offset % 4
+    return packets
+
+
 def prepare_preview(key, destination, audio, video, media):
     cue, rate, samples = audio_clip(raw_stream(audio, media))
     movie = raw_stream(video, media)
-    if not movie.startswith(b"BIK"):
-        raise ValueError(f"Expected a Bink coach video for {key}")
-    write_preview(key, destination, cue, rate, samples, movie)
+    if movie.startswith(b"MOC5"):
+        write_preview(key, destination, cue, rate, samples, mobiclip_packets(movie), seek_before_input=False)
+    elif movie.startswith(b"BIK"):
+        write_preview(key, destination, cue, rate, samples, movie)
+    else:
+        raise ValueError(f"Unexpected coach video for {key}")
 
 
-def prepare_lyn_previews(disc, destination, songs, archive, jobs):
+def prepare_lyn_previews(disc, destination, songs, archive, jobs, *, movie_extension="bik"):
     pending = {key: names for key, names in songs.items()
                if not ((destination / f"{key}.wav").is_file() and (destination / f"{key}.rgb").is_file())}
     if not pending:
@@ -78,15 +106,10 @@ def prepare_lyn_previews(disc, destination, songs, archive, jobs):
     family = archive.split(".", 1)[0]
     aliases = dict(entries(files / archive))
     media = dict(entries(files / f"{family}.wii.wav.bf"))
-    for video in sorted(files.glob(f"{family}.wii.bik.bf*")):
+    for video in sorted(files.glob(f"{family}.wii.{movie_extension}.bf*")):
         media.update(entries(video))
     audio, video = zip(*(tuple(aliases[name.lower().encode("ascii")] for name in names)
                          for names in pending.values()))
     with ProcessPoolExecutor(max_workers=jobs) as work:
         for _ in work.map(prepare_preview, pending, repeat(destination), audio, video, repeat(media)):
             pass
-
-
-def prepare_jd3_previews(disc, destination):
-    songs = {key: (f"{stem}.wav", f"{stem}.bik") for key, stem in JD3_SONGS.items()}
-    prepare_lyn_previews(disc, destination, songs, "JD3.bf", 1)

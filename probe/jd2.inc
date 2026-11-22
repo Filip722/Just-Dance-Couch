@@ -3,13 +3,14 @@ enum {
   JD2_TITLE_LOW = 0x53443259,
   SUMMER_TITLE_LOW = 0x534a3945,
   GH_TITLE_LOW = 0x534a4845,
+  JD4_TITLE_LOW = 0x534a5845,
   JD2_KPAD_STATUS_BYTES = 240,
   JD2_KPAD_MAX_SAMPLES = 16,
   JD2_MENU_SETTLE_MS = 2000,
 };
 
 typedef struct {
-  uint32_t key, slot_offset, slot, coach_key;
+  uint32_t key, slot_offset, slot, asset_key;
 } Jd2SongSlot;
 
 // Generated from the verified USA catalog in probe/jd2.py.
@@ -21,6 +22,12 @@ SUMMER_SONG_SLOTS
 };
 static const Jd2SongSlot gh_song_slots[] = {
 GH_SONG_SLOTS
+};
+static const Jd2SongSlot jd3_song_slots[] = {
+JD3_SONG_SLOTS
+};
+static const Jd2SongSlot jd4_song_slots[] = {
+JD4_SONG_SLOTS
 };
 
 typedef struct {
@@ -52,6 +59,20 @@ static const Jd2Edition jd2_editions[] = {
     .first_slot_offset = 722, .first_slot = 0x233018b9u,
     .input_caller = 0x8002eb30u,
     .slots = gh_song_slots, .count = sizeof gh_song_slots / sizeof *gh_song_slots,
+  },
+  {
+    .name = "Just Dance 3", .title_low = SJDE41_TITLE_LOW,
+    .catalog_bytes = 144922, .catalog_signature = 0x5a060000u,
+    .first_slot_offset = 722, .first_slot = 0x72c1ce4eu,
+    .input_caller = 0x80036110u,
+    .slots = jd3_song_slots, .count = sizeof jd3_song_slots / sizeof *jd3_song_slots,
+  },
+  {
+    .name = "Just Dance 4", .title_low = JD4_TITLE_LOW,
+    .catalog_bytes = 0x3fffcu, .catalog_signature = 0x00ba0b03u,
+    .first_slot_offset = 0xc963, .first_slot = 0x2dc2573fu,
+    .input_caller = 0x8006ddfcu,
+    .slots = jd4_song_slots, .count = sizeof jd4_song_slots / sizeof *jd4_song_slots,
   },
 };
 

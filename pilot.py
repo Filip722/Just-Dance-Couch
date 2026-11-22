@@ -14,12 +14,11 @@ import tarfile
 import tempfile
 from urllib.request import urlretrieve
 
-from probe import gh, jd1, jd2
+from probe import gh, jd1, jd2, jd3, jd4
 from probe.collection import EDITIONS, catalog, write_catalog
 from probe.instrument import (
     fix_jd2_bigfile, instrument, instrument_jd3,
 )
-from probe.lyn_previews import JD3_SONGS, prepare_jd3_previews
 from probe.previews import prepare_previews
 
 
@@ -48,10 +47,11 @@ DISCS = {
     "SDNE41": ("Just Dance.rvz", 0, "6938c96e3511568eec2c2abaaa26b64cbd47a852b51dbf20929da053a2c8beb1"),
 }
 EMBEDDED_TITLES = {
-    "SJOE41": "jd2014_title", "SE3E41": "jd2015_title", "SJDE41": "jd3_title",
+    "SJOE41": "jd2014_title", "SE3E41": "jd2015_title",
     **{disc: f"title_{disc}" for disc in EDITIONS},
     "SDNE41": "jd1_title",
     "SD2Y41": "jd2_title", "SJ9E41": "summer_title", "SJHE41": "gh_title",
+    "SJDE41": "jd3_title", "SJXE41": "jd4_title",
 }
 BACKUPS = Path("/mnt/synology/Games/wii")
 
@@ -184,10 +184,12 @@ def prepare_probe_adapter():
     for placeholder, songs in (("JD2_SONG_SLOTS", jd2.JD2_SONGS), ("SUMMER_SONG_SLOTS", jd2.SUMMER_SONGS)):
         slots = "\n".join(f"  {{0x{key}u, {offset}, {slot}u, 0}}," for key, _, _, _, slot, offset in songs)
         selection = selection.replace(placeholder, slots)
-    gh_slots = "\n".join(f"  {{0x{key}u, {offset}, {slot}u, 0x{coach}u}},"
-                         for key, _, _, _, slot, offset, coach in gh.SONGS)
-    selection = selection.replace("GH_SONG_SLOTS", gh_slots)
-    content = (folder / "jd2014.c").read_text() + "\n" + selection + "\n" + (folder / "gh.inc").read_text()
+    for placeholder, songs in (("GH_SONG_SLOTS", gh.SONGS), ("JD3_SONG_SLOTS", jd3.SONGS),
+                               ("JD4_SONG_SLOTS", jd4.SONGS)):
+        slots = "\n".join(f"  {{0x{key}u, {offset}, {slot}u, 0x{asset}u}},"
+                          for key, _, _, _, slot, offset, asset, *_ in songs)
+        selection = selection.replace(placeholder, slots)
+    content = (folder / "jd2014.c").read_text() + "\n" + selection + "\n" + (folder / "lyn_classic.inc").read_text()
     if not adapter.exists() or adapter.read_text() != content:
         adapter.write_text(content)
 
@@ -209,7 +211,7 @@ def build(disc_id, image, jobs):
         generated = title_build / "generated"
         if disc_id == "SJDE41":
             instrument_jd3(generated)
-            prepare_jd3_previews(disc, CACHE / "previews" / disc_id)
+            jd3.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
         else:
             instrument(generated, disc_id)
         if disc_id == "SD2Y41":
@@ -251,8 +253,10 @@ def boot(disc_id, fresh, song):
             env["JD2_PROBE_MAP"] = song
         elif disc_id == "SJHE41" and any(key == song for key, *_ in gh.SONGS):
             env["JD2_PROBE_MAP"] = song
-        elif disc_id == "SJDE41" and song in JD3_SONGS:
-            env["JD3_PROBE_MAP"] = song
+        elif disc_id == "SJDE41" and any(key == song for key, *_ in jd3.SONGS):
+            env["JD2_PROBE_MAP"] = song
+        elif disc_id == "SJXE41" and any(key == song for key, *_ in jd4.SONGS):
+            env["JD2_PROBE_MAP"] = song
         else:
             raise ValueError("Unknown song key for this native probe")
     os.chdir(STATE)
@@ -282,7 +286,13 @@ def build_couch(jobs):
         verify_disc(disc, disc_id)
         title_build = RUNTIME / f"build-{disc_id}"
         if disc_id == "SJDE41":
+            collection[disc_id] = "Just Dance 3", jd3.catalog()
+            jd3.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
             instrument_jd3(title_build / "generated")
+        elif disc_id == "SJXE41":
+            collection[disc_id] = "Just Dance 4", jd4.catalog()
+            jd4.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
+            instrument(title_build / "generated", disc_id)
         elif disc_id == "SDNE41":
             collection[disc_id] = "Just Dance", jd1.catalog()
             jd1.prepare_previews(disc, CACHE / "previews" / disc_id)
