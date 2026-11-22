@@ -2,6 +2,7 @@
 enum GhStage { GH_BOOT, GH_TITLE, GH_MAIN_MENU, GH_CAROUSEL, GH_LOBBY, GH_TRANSITION, GH_DANCE };
 static enum GhStage gh_stage;
 static uint64_t gh_stage_entered;
+static unsigned gh_first_card_at;
 static int gh_movie_confirmed, gh_movie_visible, gh_recap, jd4_scene_confirmed;
 
 void gh_probe_video_frame(void);
@@ -66,16 +67,26 @@ void gh_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_t
   // Let the stock transition lay out the cards. Right moves from the mode
   // card to the first routine, which the verified catalog swap selected.
   enum {
-    FIRST_CARD_MS = 900, RIGHT_RELEASE_MS = 1130, CAROUSEL_SETTLE_MS = 4400,
+    FIRST_CARD_MS = 900, RIGHT_HELD_MS = 230, CAROUSEL_SETTLE_MS = 4400,
     MENU_SETTLE_MS = 1500, CONFIRM_HELD_MS = 330, JD3_PRIVACY_PROMPT_MS = 5400,
   };
   unsigned elapsed = (time_base() - gh_stage_entered) / JD1_TICKS_PER_MS;
   unsigned settle = gh_stage == GH_CAROUSEL ? CAROUSEL_SETTLE_MS : MENU_SETTLE_MS;
   if (gh_stage == GH_TITLE) settle = 0;
   int jd4 = jd2_edition->title_low == JD4_TITLE_LOW;
+  int greatest_hits = jd2_edition->title_low == GH_TITLE_LOW;
   uint32_t held = 0;
-  if (!jd4 && gh_stage == GH_CAROUSEL && elapsed >= FIRST_CARD_MS && elapsed < RIGHT_RELEASE_MS)
-    held = BUTTON_RIGHT;
+  if (!jd4 && gh_stage == GH_CAROUSEL && elapsed >= FIRST_CARD_MS) {
+    unsigned press_at = FIRST_CARD_MS;
+    if (greatest_hits) {
+      // Send the move on the first available sample and let the card settle
+      // from that point even if the remote paused during the usual window.
+      if (!gh_first_card_at) gh_first_card_at = elapsed;
+      press_at = gh_first_card_at;
+      settle += press_at - FIRST_CARD_MS;
+    }
+    if (elapsed - press_at < RIGHT_HELD_MS) held = BUTTON_RIGHT;
+  }
   if (elapsed >= settle && (elapsed - settle) % JD1_CONFIRM_PERIOD_MS < CONFIRM_HELD_MS)
     held = BUTTON_A;
   float x = 0, y = 0.12f;
@@ -98,7 +109,8 @@ void gh_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_t
   if (!jd4 && gh_stage == GH_LOBBY) y = 0.76f;
 
   static uint32_t previous;
-  const uint32_t menu_buttons = BUTTON_A | BUTTON_RIGHT;
+  // Greatest Hits' hidden menu sequence owns navigation until the dance starts.
+  const uint32_t menu_buttons = greatest_hits ? UINT32_MAX : BUTTON_A | BUTTON_RIGHT;
   for (uint32_t i = 0; i < count && i < JD2_KPAD_MAX_SAMPLES; i++) {
     uint32_t pad = buffer + i * JD2_KPAD_STATUS_BYTES;
     wr32(pad + JD1_KPAD_HOLD, (rd32(pad + JD1_KPAD_HOLD) & ~menu_buttons) | held);

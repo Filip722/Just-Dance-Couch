@@ -119,6 +119,24 @@ static const Jd2SongSlot *jd2_requested_song(void) {
 }
 
 void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
+  // Greatest Hits hides two on-disc routines behind title-screen codes.
+  // Let the native bonus check accept them in the worker that launches one.
+  enum {
+    GH_BABY_GIRL = 0x76c053e8u, GH_KATTI_KALANDAL = 0x76c05471u,
+    GH_BONUS_SCRIPT_BYTES = 144697, GH_BONUS_UNLOCK_METHOD = 54689,
+    GH_BONUS_LOCKED_RETURN = 55173,
+  };
+  if (title->title_low == GH_TITLE_LOW && bytes == GH_BONUS_SCRIPT_BYTES && jd2_song &&
+      (jd2_song->key == GH_BABY_GIRL || jd2_song->key == GH_KATTI_KALANDAL)) {
+    static const char unlock_method[] = "BonusManager_IsBonusUnlocked";
+    const char *name = (const char *)host(buffer + GH_BONUS_UNLOCK_METHOD);
+    uint32_t locked = buffer + GH_BONUS_LOCKED_RETURN;
+    // Replace the verified LyN bytecode's false return literal with true.
+    if (name && !memcmp(name, unlock_method, sizeof unlock_method) &&
+        rd32(locked) == 0x24080000u && rd32(locked + 4) == 0x14000000u && !rd32(locked + 8))
+      wr8(locked + 6, 1);
+    return;
+  }
   if (jd2_catalog_ready) return;
   if (dlc_index() && title->title_low == SJDE41_TITLE_LOW) return;
   if (!jd2_edition) jd2_edition = jd2_title_edition();
