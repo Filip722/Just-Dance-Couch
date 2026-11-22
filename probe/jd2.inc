@@ -122,6 +122,18 @@ static const Jd2SongSlot *jd2_requested_song(void) {
   exit(2);
 }
 
+static void jd3_skip_tracking_prompt(uint32_t buffer) {
+  enum { TRACKING_GETTER = 0xa5c4, TRACKING_COMPARISON_LITERAL = 0xa5f6 };
+  static const char getter[] = "UniverseSavedItem_GetTrackingPopupDisplayedOnce";
+  const char *name = (const char *)host(buffer + TRACKING_GETTER);
+  uint32_t literal = buffer + TRACKING_COMPARISON_LITERAL;
+  // The hidden menu runs offline. Make the stock prompt's Boolean check false.
+  if (name && !memcmp(name, getter, sizeof getter) &&
+      rd32(literal) == 0x14000000u && !rd32(literal + 4) &&
+      rd32(literal + 8) == 0x460a0000u && rd32(literal + 12) == 0x5b0c1900u)
+    wr8(literal + 2, 2);  // The getter returns either 0 or 1.
+}
+
 static void jd3_unlock_catalog_bonuses(uint32_t buffer) {
   // Keep these on-disc routines in Classic by clearing their Mojo bonus keys.
   // Each ma_BonusProperties entry contains the Mojo level, map key and reward type.
@@ -149,7 +161,7 @@ void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
     GH_BABY_GIRL = 0x76c053e8u, GH_KATTI_KALANDAL = 0x76c05471u,
     GH_BONUS_SCRIPT_BYTES = 144697, GH_BONUS_UNLOCK_METHOD = 54689,
     GH_BONUS_LOCKED_RETURN = 55173,
-    JD3_BONUS_BLOCK_BYTES = 0x3fffc, JD3_DLC_CATALOG_BYTES = 75017,
+    JD3_SCRIPT_BLOCK_BYTES = 0x3fffc, JD3_DLC_CATALOG_BYTES = 75017,
   };
   if (title->title_low == GH_TITLE_LOW && bytes == GH_BONUS_SCRIPT_BYTES && jd2_song &&
       (jd2_song->key == GH_BABY_GIRL || jd2_song->key == GH_KATTI_KALANDAL)) {
@@ -163,13 +175,16 @@ void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
     return;
   }
   if (title->title_low == SJDE41_TITLE_LOW) {
+    if (bytes == JD3_SCRIPT_BLOCK_BYTES && rd32(buffer) == 0x5f506f70u &&
+        (couch_booting() || getenv("JD2_PROBE_MAP")))
+      jd3_skip_tracking_prompt(buffer);
     if (dlc_index()) {
       if (jd2_catalog_ready && !jd2_map_seen && bytes >= 4 &&
           rd32(buffer) == __builtin_bswap32(jd2_song->asset_key)) {
         jd2_map_seen = 1;
         fprintf(stderr, "probe: original Just Dance 3 DLC choreography confirmed for map %08x\n", jd2_song->key);
       }
-    } else if (bytes == JD3_BONUS_BLOCK_BYTES && rd32(buffer) == 0x53993109u &&
+    } else if (bytes == JD3_SCRIPT_BLOCK_BYTES && rd32(buffer) == 0x53993109u &&
                rd32(buffer + 4) == 0xda040000u && (couch_booting() || getenv("JD2_PROBE_MAP"))) {
       // This world can load before the picker has received a selection.
       jd3_unlock_catalog_bonuses(buffer);

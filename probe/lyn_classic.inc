@@ -22,6 +22,8 @@ void gh_probe_track(void) {
   }
 
   int jd4 = jd2_edition->title_low == JD4_TITLE_LOW;
+  int jd3 = jd2_edition->title_low == SJDE41_TITLE_LOW;
+  int jd3_download = jd3 && dlc_index();
   const char *main_menu = jd4 ? "MenuPage_Home_trk_Update" : "MenuPage_Main_trk_Begin";
   const char *carousel = jd4 ? "MenuPage_CoverFlow_trk_PlayAudio" : "MenuPage_Flow_trk_Run";
   const char *lobby = jd4 ? "MenuPage_Lobby_WiiU_CheckInputs" : "MenuPage_Lobby_trk_CheckInputs";
@@ -29,19 +31,22 @@ void gh_probe_track(void) {
   enum GhStage next = gh_stage;
   if (gh_stage == GH_BOOT && !strcmp(track, "Universe_trk_Run")) next = GH_TITLE;
   if (gh_stage == GH_TITLE && !strcmp(track, main_menu)) next = GH_MAIN_MENU;
-  if (gh_stage == GH_MAIN_MENU && !strcmp(track, carousel)) {
+  int entering_lobby = !strcmp(track, lobby);
+  // The stock flow can start preview audio or enter the lobby before its run track.
+  if (gh_stage == GH_MAIN_MENU &&
+      (!strcmp(track, carousel) || (jd3_download && !strcmp(track, "FlowView_trk_PlayAudio")) ||
+       (jd3 && entering_lobby))) {
     if (!jd2_catalog_ready) {
       fprintf(stderr, "probe: the %s catalog could not be prepared\n", jd2_edition->name);
       exit(2);
     }
-    next = GH_CAROUSEL;
+    next = entering_lobby ? GH_LOBBY : GH_CAROUSEL;
   }
-  if (gh_stage == GH_CAROUSEL && !strcmp(track, lobby)) next = GH_LOBBY;
+  if (gh_stage == GH_CAROUSEL && entering_lobby) next = GH_LOBBY;
   if (gh_stage == GH_LOBBY && !strcmp(track, transition)) next = GH_TRANSITION;
   if (!strcmp(track, "LevelManager_trk_GameLoop")) {
     time_boot_finish();
     next = GH_DANCE;
-    int jd3_download = jd2_edition->title_low == SJDE41_TITLE_LOW && dlc_index();
     if (jd4 || jd3_download) {
       if (!(jd4 ? jd4_scene_confirmed : jd2_map_seen)) {
         fprintf(stderr, "probe: %s did not load the choreography for map %08x\n", jd2_edition->name, jd2_song->key);
@@ -65,14 +70,16 @@ void gh_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_t
   // card to the first routine, which the verified catalog swap selected.
   enum {
     FIRST_CARD_MS = 900, RIGHT_HELD_MS = 230, CAROUSEL_SETTLE_MS = 4400,
-    MENU_SETTLE_MS = 1500, CONFIRM_HELD_MS = 330, JD3_PRIVACY_PROMPT_MS = 5400,
+    MENU_SETTLE_MS = 1500, CONFIRM_HELD_MS = 330,
   };
   unsigned elapsed = (time_base() - gh_stage_entered) / JD1_TICKS_PER_MS;
   unsigned settle = gh_stage == GH_CAROUSEL ? CAROUSEL_SETTLE_MS : MENU_SETTLE_MS;
   if (gh_stage == GH_TITLE) settle = 0;
   int jd4 = jd2_edition->title_low == JD4_TITLE_LOW;
+  int jd3_download = jd2_edition->title_low == SJDE41_TITLE_LOW && dlc_index();
   uint32_t held = 0;
-  if (!jd4 && gh_stage == GH_CAROUSEL && elapsed >= FIRST_CARD_MS) {
+  // Just Dance 3 centers the mounted routine when its DLC carousel opens.
+  if (!jd4 && !jd3_download && gh_stage == GH_CAROUSEL && elapsed >= FIRST_CARD_MS) {
     // Start the move and its settling time from the first available sample.
     if (!gh_first_card_at) gh_first_card_at = elapsed;
     if (elapsed - gh_first_card_at < RIGHT_HELD_MS) held = BUTTON_RIGHT;
@@ -89,9 +96,8 @@ void gh_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_t
   } else if (jd2_edition->title_low == SJDE41_TITLE_LOW) {
     if (gh_stage == GH_TITLE) y = 0.58f;
     if (gh_stage == GH_MAIN_MENU) {
-      // The first-run opt-out is in the lower right of the stock prompt.
-      x = elapsed < JD3_PRIVACY_PROMPT_MS ? 0.76f : -0.51f;
-      y = elapsed < JD3_PRIVACY_PROMPT_MS ? 0.53f : -0.19f;
+      x = -0.51f;
+      y = -0.19f;
     }
   } else if (gh_stage == GH_MAIN_MENU) {
     x = -0.48f;
