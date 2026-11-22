@@ -1,35 +1,35 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
-from probe.collection import newest_songs
+from probe.collection import newest_dlc_songs, write_catalog
 
 
-class NewestSongsTest(unittest.TestCase):
-    def test_keeps_the_latest_source_across_disc_and_dlc(self):
-        just_dance = ("Just Dance", "Lady Gaga", "JustDance")
-        new_just_dance = (
-            "Just Dance", "Lady Gaga Ft. Colby O'Donis", "JustDanceDLC", "SE3E41", "jd2015", 2,
-        )
-        old_gangnam = ("Gangnam Style", "Psy", "76c1b9c7", "SJXE41", "jd4", 7)
-        new_gangnam = ("Gangnam Style", "PSY", "GangnamStyleDLC", "SE3E41", "jd2015", 4)
-        summer = ("Summer", "Calvin Harris", "Summer")
-        other_summer = ("Summer", "Another Artist", "OtherSummer")
+class CatalogTest(unittest.TestCase):
+    def test_keeps_disc_songs_and_only_deduplicates_dlc(self):
         collection = {
-            "SJXE41": ("Just Dance 4", [other_summer]),
-            "SJOE41": ("Just Dance 2014", [just_dance]),
-            "SE3E41": ("Just Dance 2015", [summer]),
+            "SD2Y41": ("Just Dance 2", [("Rasputin", "Boney M.", "93801d03")]),
+            "SJHE41": ("Just Dance Greatest Hits", [("Rasputin", "Boney M.", "76c06ae0")]),
+            "SJXE41": ("Just Dance 4", []),
+            "SJOE41": ("Just Dance 2014", [("Just Dance", "Lady Gaga", "JustDance")]),
+            "SE3E41": ("Just Dance 2015", []),
         }
+        dlc = [
+            ("Gangnam Style", "PSY", "GangnamStyleDLC", "SE3E41", "jd2015", 2),
+            ("Just Dance", "Lady Gaga Ft. Colby O'Donis", "JustDanceDLC", "SE3E41", "jd2015", 9),
+            ("Gangnam Style", "Psy", "76c1b9c7", "SJXE41", "jd4", 7),
+        ]
 
-        discs, dlc = newest_songs(collection, [new_gangnam, new_just_dance, old_gangnam])
+        with TemporaryDirectory() as staging:
+            write_catalog(Path(staging), collection, dlc)
+            catalog = (Path(staging) / "collection_catalog.h").read_text(encoding="utf-8")
 
-        self.assertEqual(discs["SJOE41"][1], [])
-        self.assertEqual(discs["SJXE41"][1], [other_summer])
-        self.assertEqual(discs["SE3E41"][1], [summer])
-        self.assertEqual(dlc, [new_gangnam, new_just_dance])
+        for key in ("93801d03", "76c06ae0", "JustDance", "JustDanceDLC", "GangnamStyleDLC"):
+            self.assertIn(f'"{key}"', catalog)
+        self.assertNotIn('"76c1b9c7"', catalog)
 
-    def test_prefers_the_standard_disc_routine_in_the_same_edition(self):
-        disc_song = ("Let It Go", "Disney's Frozen", "LetItGo")
-        dlc_song = ("''Let It Go''", "Disney Frozen", "LetItGoDLC", "SE3E41", "jd2015", 3)
-        alternate = ("Let It Go (Alternate)", "Disney's Frozen", "Alternate", "SE3E41", "jd2015", 4)
-        collection = {"SE3E41": ("Just Dance 2015", [disc_song])}
+    def test_prefers_the_standard_dlc_routine_in_the_same_edition(self):
+        standard = ("Let It Go", "Disney Frozen", "LetItGoDLC", "SE3E41", "jd2015", 23)
+        alternate = ("Let It Go (Alternate)", "Disney Frozen", "Alternate", "SE3E41", "jd2015", 4)
 
-        self.assertEqual(newest_songs(collection, [dlc_song, alternate]), (collection, []))
+        self.assertEqual(newest_dlc_songs([standard, alternate], ["SE3E41"]), [standard])

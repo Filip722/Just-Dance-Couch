@@ -57,9 +57,9 @@ From the first song row, press **Up** to focus the edition name. Use **Left** an
 
 ## Song library and DLC
 
-The disc pages show supported Classic routines in release order. The **DLC** page follows **Just Dance 2019** when add-ons are available. The build imports USA Wii add-ons for **Just Dance 2–4**, **Just Dance 2014**, and **Just Dance 2015**.
+Each disc page shows that edition’s full supported Classic catalog. The **DLC** page follows **Just Dance 2019** when add-ons are available. The build imports USA Wii add-ons for **Just Dance 2–4**, **Just Dance 2014**, and **Just Dance 2015**.
 
-When a song appears across multiple disc or DLC editions, the picker shows the newest available version. Within the same edition, the standard routine takes priority.
+When a song appears in several DLC editions, the DLC page shows the newest available add-on copy. Within that edition, the standard DLC routine takes priority.
 
 ## Local files and logs
 
