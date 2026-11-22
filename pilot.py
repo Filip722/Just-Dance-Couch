@@ -20,6 +20,7 @@ from probe.dlc_lyn import JD2_DLC_SLOT_OFFSETS, JD4_DLC_CHOREOGRAPHY, LYN_DLC
 from probe.instrument import (
     fix_jd2_bigfile, instrument, instrument_jd3,
 )
+from probe.legacy_ubiart import CLASSIC_CATALOGS
 from probe.previews import prepare_previews
 
 
@@ -47,12 +48,13 @@ DISCS = {
     "SJ9E41": ("Just Dance Summer Party.rvz", 0, "e6728082fd351ac90503cfec6684b4515ef0bf5ae9a766060de59fe2d59b0ee0"),
     "SDNE41": ("Just Dance.rvz", 0, "6938c96e3511568eec2c2abaaa26b64cbd47a852b51dbf20929da053a2c8beb1"),
 }
+# Keep this in Wii release order for the picker and cross-edition song selection.
 EMBEDDED_TITLES = {
+    "SDNE41": "jd1_title",
+    "SD2Y41": "jd2_title", "SJ9E41": "summer_title",
+    "SJDE41": "jd3_title", "SJHE41": "gh_title", "SJXE41": "jd4_title",
     "SJOE41": "jd2014_title", "SE3E41": "jd2015_title",
     **{disc: f"title_{disc}" for disc in EDITIONS},
-    "SDNE41": "jd1_title",
-    "SD2Y41": "jd2_title", "SJ9E41": "summer_title", "SJHE41": "gh_title",
-    "SJDE41": "jd3_title", "SJXE41": "jd4_title",
 }
 BACKUPS = Path("/mnt/synology/Games/wii")
 
@@ -324,6 +326,7 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
                     raise ValueError(f"No local Classic routines for {disc_id}")
                 keys = {key.lower() for _, _, key in songs}
             else:
+                collection[disc_id] = CLASSIC_CATALOGS[disc_id]
                 keys = None
             prepare_previews(disc, CACHE / "previews" / disc_id, jobs, keys)
             instrument(title_build / "generated", disc_id)

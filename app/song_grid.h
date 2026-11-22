@@ -16,7 +16,6 @@ typedef struct {
   int count;
 } Edition;
 
-extern const Song songs[];
 extern const Edition editions[];
 extern const int edition_count;
 const Edition *edition_for_disc(const char *disc);

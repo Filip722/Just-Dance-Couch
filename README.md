@@ -4,15 +4,15 @@ A native Linux x86-64 launcher for locally owned Just Dance Wii backups. It buil
 
 ## Current state
 
-- The fullscreen picker has 497 routines across 12 Wii editions in release order. It opens on the original **Just Dance** and ends at **Just Dance 2019**. Each edition has an alphabetical five-column grid with three visible rows and coach and music previews on every tile. The launcher warms the current edition while you browse.
-- **Just Dance 2014 (USA)** launches all 48 listed routines from the original game. Loopback tests verified scoring in **Just Dance**, **Get Lucky**, and **#thatPOWER**, the **Get Lucky** recap, and return to the selected row after completion and cancellation.
-- **Just Dance 2015 (USA)** launches all 42 listed routines from the original game. The launcher starts the 2015 worker when you open its page and keeps the boot and lobby screens hidden. Loopback tests verified scoring in **4x4** and **Happy**, cancellation from **4x4**, and return to the picker after the **Happy** recap.
+- The fullscreen picker spans 12 Wii editions in release order, from the original **Just Dance** to **Just Dance 2019**. With the local add-on packs loaded, it shows 442 disc tiles and 66 DLC tiles. Each edition has an alphabetical five-column grid with three visible rows and coach and music previews on every tile. The launcher warms the current edition while you browse.
+- **Just Dance 2014 (USA)** supports 48 Classic routines in the original game. Loopback tests verified scoring in **Just Dance**, **Get Lucky**, and **#thatPOWER**, the **Get Lucky** recap, and return to the selected row after completion and cancellation.
+- **Just Dance 2015 (USA)** supports 42 Classic routines in the original game. The launcher starts the 2015 worker when you open its page and keeps the boot and lobby screens hidden. Loopback tests verified scoring in **4x4** and **Happy**, cancellation from **4x4**, and return to the picker after the **Happy** recap.
 - **Just Dance 3 (USA, revision 1)** adds 47 Classic routines with local coach and music previews. Pump It and Take On Me launched their matching fullscreen routines. Escape returned to their tiles. A complete Pump It run reached the original recap and returned to the same tile on Enter.
 - **Direct USB Wii Remote mode** claims and releases the Nintendo Wii Bluetooth module. Red SYNC pairing, handoff to Player 1, and motion scoring are verified with a physical Wii Remote in Just Dance 2014. A button wake and reconnect were confirmed after restarting the launcher.
 - **Just Dance 2016–2019 (USA)** add 177 Classic disc routines with locally cached previews. Each edition launches its original game directly into the selected dance. Loopback tests reached scoring on **No Control**, **Cheap Thrills**, **24K Magic**, and **Familiar**. Dismissing Familiar’s original recap returned to its selected tile.
-- **Just Dance (USA)** has 32 local coach and music previews and launches the matching original routines. The software checks recorded scoring and the original recap. Some test runs reached the recap early.
-- **Just Dance 2 (USA)** has 47 alphabetical tiles with local coach and music previews. The original game launched Cosmic Girl, Rasputin, and Jai Ho from their native keys. Cosmic Girl reached motion scoring, and Soul Bossa Nova reached the original recap. Cancelling Cosmic Girl and Jai Ho returned to their tiles.
-- **Just Dance Summer Party (USA)** has 23 alphabetical tiles with local coach and music previews. Pon De Replay scored with simulated motion, and Escape returned to its tile. Firework reached original gameplay in an isolated stock launch.
+- **Just Dance (USA)** supports 32 original routines with local coach and music previews. The software checks recorded scoring and the original recap. Some test runs reached the recap early.
+- **Just Dance 2 (USA)** supports 47 original routines with local coach and music previews. The original game launched Cosmic Girl, Rasputin, and Jai Ho from their native keys. Cosmic Girl reached motion scoring, and Soul Bossa Nova reached the original recap. Cancelling Cosmic Girl and Jai Ho returned to their tiles.
+- **Just Dance Summer Party (USA)** supports 23 original routines with local coach and music previews. Pon De Replay scored with simulated motion, and Escape returned to its tile. Firework reached original gameplay in an isolated stock launch.
 - **Just Dance Greatest Hits (USA)** adds 37 alphabetical songs with local coach and music previews. Rasputin and Jai Ho opened their original fullscreen routines in loopback. Escape restored the selected tile.
 - **Just Dance 4 (USA)** adds 44 local Classic routines with MobiClip coach previews and music. The original gameplay and motion feedback were verified in Disturbia and We No Speak Americano. Disturbia opened fullscreen from the picker, and Escape restored its tile.
 - The three Kids and two Disney Party editions are outside this pass. This library has no Just Dance 2020 backup. The picker uses on-disc Classic routines where the edition has multiple modes.
@@ -52,7 +52,7 @@ After the catalog warmed up, Girls Just Want To Have Fun appeared in about 6.6 s
 
 The Linux audio output starts with a 40 ms ALSA buffer and retries with 100 ms after its first underrun. On a private 48 kHz PipeWire graph with 2,048-frame periods, the 40 ms configuration failed before Jailhouse Rock started. The retry restored 24 seconds of uninterrupted gameplay audio in the capture. The mixer output also matched the disc track in comparisons during gameplay.
 
-The runtime waits for the Wii audio DMA interrupt handler to finish preparing the next buffer before catching up. This prevents repeated 3 ms audio buffers during gameplay. In a ten-second sample of **Big Girl (You Are Beautiful)**, waveform correlation with the disc track improved from 0.516 to 0.999996. The private PipeWire sweep captured gameplay audio from all twelve disc editions and both the Just Dance 4 and 2015 **Gangnam Style** DLC variants.
+The runtime waits for the Wii audio DMA interrupt handler to finish preparing the next buffer before catching up. This prevents repeated 3 ms audio buffers during gameplay. In a ten-second sample of **Big Girl (You Are Beautiful)**, waveform correlation with the disc track improved from 0.516 to 0.999996. The private PipeWire sweep captured gameplay audio from all twelve disc editions and the Just Dance 4 and 2015 DLC copies of **Gangnam Style** before duplicate filtering.
 
 ## Build and run
 
@@ -73,7 +73,7 @@ The build reads `/mnt/synology/Games/wii/` by default. Pass `build --image /path
 
 `python3 -B pilot.py couch` imports owned USA add-on WADs from `/mnt/synology/Games/wii/DLC/`. Use `couch --dlc-dir /path/to/DLC` for another folder. The first import requires Python `cryptography` and verifies each content file against its Wii title metadata. The build caches the imported contents, thumbnails, and eight-second audio and video previews. The launcher reuses them on startup.
 
-Choose **DLC** after **Just Dance 2019** in the edition picker. The shared page sorts by song title and labels each tile with its source game. The selected title boots with the requested download and any shared DLC catalog it needs. D-pad, A, and HOME work the same way as on the disc pages.
+Choose **DLC** after **Just Dance 2019** in the edition picker. The shared page sorts by song title and labels each tile with its source game. When a song appears in multiple games, the picker keeps the newest available edition across disc and DLC. Within an edition, it prefers the standard routine and uses the disc copy when it offers that routine. The retained **Gangnam Style** tile uses **Just Dance 2015**. The selected title boots with the requested download and any shared DLC catalog it needs. D-pad, A, and HOME work the same way as on the disc pages.
 
 All 135 routines reached their matching fullscreen dance in native loopback tests. The picker returned to the selected **Part of Me** tile after cancelling the Just Dance 4 routine. The Just Dance 3 **Jambo Mambo** test reached original move scoring and produced gameplay audio through an isolated PipeWire sink.
 
@@ -152,7 +152,7 @@ The build checks the USA region, outer disc ID and revision, and boot DOL SHA-25
 
 ## Collection coverage
 
-All 17 backups produced video under the planning reference run and were compiled locally. Native startup traces for the older titles are in `probe/collection/legacy-smoke/`. Each disc is USA revision 0 unless marked otherwise. The local inventory at `probe/catalog/ipk-descriptors.json` counts distinct paths and template keys, including variants and entries whose playability is unknown. `probe/catalog/dol-identities.log` records all 17 exact boot hashes and the verified JD4 ELF segment matches. Each of the 2017–2019 symbol maps contains the original song selection, lobby launch, and move-scoring methods.
+All 17 backups produced video under the planning reference run and were compiled locally. Native startup traces for the older titles are in `probe/collection/legacy-smoke/`. Each disc is USA revision 0 unless marked otherwise. Routine counts in this table describe source entries before duplicate filtering. The local inventory at `probe/catalog/ipk-descriptors.json` counts distinct paths and template keys, including variants and entries whose playability is unknown. `probe/catalog/dol-identities.log` records all 17 exact boot hashes and the verified JD4 ELF segment matches. Each of the 2017–2019 symbol maps contains the original song selection, lobby launch, and move-scoring methods.
 
 | Disc | ID | Routine metadata | Native milestone | Selected dance | Physical pass |
 | --- | --- | --- | --- | --- | --- |
@@ -162,10 +162,10 @@ All 17 backups produced video under the planning reference run and were compiled
 | Just Dance 4 | SJXE41 | 44 local Classic routines with coach and music previews | Native direct launch, motion feedback, and picker cancellation verified | Disturbia, We No Speak Americano | Pending |
 | Just Dance 2014 | SJOE41 | 80 descriptor paths. All 48 picker songs resolve in the original Classic database. | 44,819 main functions. Original solo scoring and Get Lucky recap verified in strict-native mode. | Just Dance, Get Lucky, and #thatPOWER | Just Dance scoring |
 | Just Dance 2015 | SE3E41 | 63 descriptor paths. All 42 picker songs resolve in the original Classic database. | 50,697 native functions. Direct launch, scoring, and Happy recap verified. | Happy and 4x4 | Pending |
-| Just Dance 2016 | SJNE41 | 43 local Classic songs in the picker | Native direct launch and scoring | No Control | Pending |
-| Just Dance 2017 | SZ7E41 | 40 local Classic songs in the picker | Native direct launch and scoring | Cheap Thrills | Pending |
-| Just Dance 2018 | SE8E41 | 46 local Classic songs in the picker | Native direct launch and scoring | 24K Magic | Pending |
-| Just Dance 2019 | S5EE41 | 48 local Classic songs in the picker | Native direct launch, scoring, and original recap | Familiar | Pending |
+| Just Dance 2016 | SJNE41 | 43 local Classic source songs | Native direct launch and scoring | No Control | Pending |
+| Just Dance 2017 | SZ7E41 | 40 local Classic source songs | Native direct launch and scoring | Cheap Thrills | Pending |
+| Just Dance 2018 | SE8E41 | 46 local Classic source songs | Native direct launch and scoring | 24K Magic | Pending |
+| Just Dance 2019 | S5EE41 | 48 local Classic source songs | Native direct launch, scoring, and original recap | Familiar | Pending |
 | Just Dance Disney Party | SJ6E41 | Pending | Native translation built | Pending | Pending |
 | Just Dance Disney Party 2 | S5DE41 | Pending | Native translation built | Pending | Pending |
 | Just Dance Greatest Hits | SJHE41 | 37 local songs with coach and music previews | Direct launch and picker cancellation verified | Rasputin, Jai Ho | Pending |
