@@ -206,8 +206,9 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   }
   setenv("WII_RECOMP_REMOTE_SLOTS", "remotes.txt", 0);
   setenv("WII_RECOMP_CONTROLLERS", "controllers.ini", 0);
-  if (map && strcmp(map, "-")) setenv("JD2014_PROBE_MAP", map, 1);
-  else unsetenv("JD2014_PROBE_MAP");
+  const char *map_variable = !strcmp(disc, "SDNE41") ? "JD1_PROBE_MAP" : "JD2014_PROBE_MAP";
+  if (map && strcmp(map, "-")) setenv(map_variable, map, 1);
+  else unsetenv(map_variable);
   char *arguments[] = {program, sys, NULL};
   return jd_runtime_main(2, arguments);
 }

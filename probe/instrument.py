@@ -63,6 +63,35 @@ UBIART_DISPLAY_HOWTO = {
 }
 
 
+# JD1 uses the original game database, menu actions, and Bink playback.
+JD1_HOOKS = {
+    "8000c6dc": "extern int jd1_probe_direct(void); if (jd1_probe_direct()) return;",
+    "8005eaf0": "extern void jd1_probe_video_open(void); jd1_probe_video_open();",
+    "802b2e48": "extern void jd1_probe_video_frame(void); jd1_probe_video_frame();",
+    "c00d2ac0": "extern int jd1_probe_skip_song(void); if (jd1_probe_skip_song()) return;",
+    "c012c954": (
+        "extern int jd1_probe_menu_choice(uint32_t); if (jd1_probe_menu_choice(m0_code)) return;"
+    ),
+}
+JD1_SITES = {
+    "8000bd58": (
+        " if (1) { cpu.lr = 0x8000bff4u; f_802b12f8(); }",
+        " extern int jd1_probe_direct(void);\n"
+        " if (!jd1_probe_direct()) { cpu.lr = 0x8000bff4u; f_802b12f8(); }",
+    ),
+    "80077160": (
+        "L_80077880:;",
+        "L_80077880:;\n"
+        " extern void jd1_probe_input(uint32_t, uint32_t, uint32_t, uint32_t);\n"
+        " jd1_probe_input(rd32s(cpu.r[1] + 244), cpu.r[25], cpu.r[22], cpu.r[29]);",
+    ),
+    "802cdc08": (
+        " if (1) { cpu.lr = 0x802cdc3cu; f_802cdc50(); }",
+        " if (1) { cpu.lr = 0x802cdc3cu; f_802cdc50(); }\n"
+        " extern void jd1_probe_flash_value(uint32_t); jd1_probe_flash_value(cpu.r[31]);",
+    ),
+}
+
 def instrument(directory, disc="SJOE41"):
     if disc in UBIART_ADDRESSES:
         pending = dict(zip(UBIART_ADDRESSES[disc].split(),
@@ -72,7 +101,8 @@ def instrument(directory, disc="SJOE41"):
             "if (jd2015_probe_skip_lobby_howto()) { cpu.r[3] = 0; return; }"
         )
     else:
-        pending = (JD2015_HOOKS if disc == "SE3E41" else HOOKS).copy()
+        pending = {"SDNE41": JD1_HOOKS, "SE3E41": JD2015_HOOKS}.get(disc, HOOKS).copy()
+    sites = JD1_SITES.copy() if disc == "SDNE41" else {}
     for source in directory.glob("*.c"):
         original = source.read_text()
         modified = original
@@ -85,41 +115,58 @@ def instrument(directory, disc="SJOE41"):
                 if not modified.startswith(line, after):
                     modified = modified[:after] + line + modified[after:]
                 del pending[address]
+        for address, (before, after) in tuple(sites.items()):
+            marker = f"void f_{address}(void)"
+            if (start := modified.find(marker)) < 0:
+                continue
+            end = modified.index("\n}", start)
+            body = modified[start:end]
+            if after not in body:
+                if body.count(before) != 1:
+                    raise ValueError(f"Unexpected {disc} probe hook at {address}")
+                modified = modified[:start] + body.replace(before, after) + modified[end:]
+            del sites[address]
         if modified != original:
             source.write_text(modified)
-        if not pending:
+        if not pending and not sites:
             break
-    if pending:
-        raise ValueError(f"Missing {disc} probe hook addresses {', '.join(pending)}")
+    if pending or sites:
+        raise ValueError(f"Missing {disc} probe hook addresses {', '.join(pending | sites)}")
 
 
-JD3_SUSPEND = " if (1) { cpu.lr = 0x8004f960u; f_8032ed10(); }"
-JD3_STREAM_WAIT = """{
+# STD_b_IOReadFileAsyncWait in the verified JD2 and JD3 executables.
+LYN_STREAM_SITES = {
+    "SD2Y41": ("8004903c", "80049128", "80343110", "803470b0", "80343150"),
+    "SJDE41": ("8004f874", "8004f960", "8032acf0", "8032ed10", "8032ad30"),
+}
+
+
+def fix_lyn_stream_wait(directory, disc):
+    function, resume, disable, suspend, restore = LYN_STREAM_SITES[disc]
+    call = f" if (1) {{ cpu.lr = 0x{resume}u; f_{suspend}(); }}"
+    wait = f"""{{
   // The DVD callback clears file+172 before resuming the waiting thread.
   // Keep interrupts disabled from the pending check through OS suspend.
-  cpu.lr = 0x8004f960u;
-  f_8032acf0();
+  cpu.lr = 0x{resume}u;
+  f_{disable}();
   unsigned interrupts_enabled = cpu.r[3];
-  if (rd32(cpu.r[27] + 172)) {
+  if (rd32(cpu.r[27] + 172)) {{
     cpu.r[3] = cpu.r[28];
-    f_8032ed10();
-  }
+    f_{suspend}();
+  }}
   cpu.r[3] = interrupts_enabled;
-  f_8032ad30();
-}"""
-
-
-def fix_jd3_stream_wait(directory):
+  f_{restore}();
+}}"""
     for source in directory.glob("*.c"):
         original = source.read_text()
-        if JD3_STREAM_WAIT in original:
+        if wait in original:
             return
-        if JD3_SUSPEND in original:
-            if "void f_8004f874(void)" not in original or original.count(JD3_SUSPEND) != 1:
-                raise ValueError("Unexpected JD3 streaming wait")
-            source.write_text(original.replace(JD3_SUSPEND, JD3_STREAM_WAIT))
+        if call in original:
+            if f"void f_{function}(void)" not in original or original.count(call) != 1:
+                raise ValueError(f"Unexpected {disc} streaming wait")
+            source.write_text(original.replace(call, wait))
             return
-    raise ValueError("Missing JD3 streaming wait at 8004f95c")
+    raise ValueError(f"Missing {disc} streaming wait in {function}")
 
 
 JD2_OPEN_BIGFILE = " if (1) { cpu.lr = 0x8000e558u; dispatch(cpu.ctr); }"
@@ -160,7 +207,7 @@ JD3_HOOKS = {
 
 
 def instrument_jd3(directory):
-    fix_jd3_stream_wait(directory)
+    fix_lyn_stream_wait(directory, "SJDE41")
     pending = JD3_HOOKS.copy()
     transitions = JD3_TRANSITIONS.copy()
     enabled = completion = False

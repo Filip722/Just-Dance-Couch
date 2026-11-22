@@ -114,9 +114,10 @@ def write_preview(key, destination, cue, rate, samples, video):
     with tempfile.TemporaryDirectory(dir=destination) as staging:
         staging = Path(staging)
         wav = staging / "preview.wav"
-        with wave.open(str(wav), "wb") as output:
-            output.setparams((2, 2, rate, 0, "NONE", "not compressed"))
-            output.writeframes(samples)
+        if samples is not None:
+            with wave.open(str(wav), "wb") as output:
+                output.setparams((2, 2, rate, 0, "NONE", "not compressed"))
+                output.writeframes(samples)
         if video:
             source, rgb = staging / "coach", staging / "preview.rgb"
             source.write_bytes(video)
@@ -131,8 +132,9 @@ def write_preview(key, destination, cue, rate, samples, video):
             if result.returncode == 0 and rgb.stat().st_size == FRAME_BYTES * PREVIEW_FPS * PREVIEW_SECONDS:
                 rgb.replace(destination / f"{key}.rgb")
             else:
-                print(f"preview: {key} has audio only", flush=True)
-        wav.replace(destination / f"{key}.wav")
+                print(f"preview: {key} coach video unavailable", flush=True)
+        if samples is not None:
+            wav.replace(destination / f"{key}.wav")
 
 
 def render_preview(job, destination):

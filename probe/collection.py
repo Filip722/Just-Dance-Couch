@@ -56,14 +56,14 @@ def catalog(disc):
 
 def write_catalog(staging, collection):
     arrays, editions = [], []
-    for disc, songs in collection.items():
+    for disc, (edition, songs) in collection.items():
         name = f"songs_{disc}"
         entries = "".join(
             "  {" + ", ".join(json.dumps(field, ensure_ascii=False) for field in song) + "},\n"
             for song in songs
         )
         arrays.append(f"static const Song {name}[] = {{\n{entries}}};\n")
-        editions.append(f'  {{"{EDITIONS[disc]}", "{disc}", {name}, sizeof {name} / sizeof {name}[0]}},')
+        editions.append(f'  {{"{edition}", "{disc}", {name}, sizeof {name} / sizeof {name}[0]}},')
     (staging / "collection_catalog.h").write_text(
         "\n".join(arrays) + "#define COLLECTION_EDITIONS " + " ".join(editions) + "\n"
     )

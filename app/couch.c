@@ -99,7 +99,8 @@ static void find_remote(Browser *browser) {
   closedir(devices);
 }
 
-static int start_worker(Browser *browser) {
+static int start_worker(Browser *browser, const char *map) {
+  const char *disc = editions[browser->edition].disc;
   int sockets[2];
   if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets)) {
     return 0;
@@ -111,7 +112,8 @@ static int start_worker(Browser *browser) {
     error = posix_spawn_file_actions_adddup2(&actions, sockets[1], WORKER_SOCKET);
     char socket_number[12];
     snprintf(socket_number, sizeof socket_number, "%d", WORKER_SOCKET);
-    char *arguments[] = {browser->program, "--worker", (char *)editions[browser->edition].disc, "-",
+    const char *boot_map = map && !strcmp(disc, "SDNE41") ? map : "-";
+    char *arguments[] = {browser->program, "--worker", (char *)disc, (char *)boot_map,
                          socket_number, browser->loopback ? "loopback" : "remote", NULL};
     if (!error) error = posix_spawn(&browser->worker, browser->program, &actions, NULL, arguments, environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -133,14 +135,15 @@ static int start_worker(Browser *browser) {
 static void end_dance(Browser *browser, enum ReturnReason reason);
 
 static void start_dance(Browser *browser) {
-  if (!editions[browser->edition].songs[browser->row].map) return;
+  const char *map = editions[browser->edition].songs[browser->row].map;
+  if (!map) return;
   if (!browser->loopback && !has_remote(browser)) return;
   if (browser->worker && (browser->worker_edition != browser->edition || browser->reason != RUNNING)) {
     browser->pending_song = 1;
     end_dance(browser, CANCELLED);
     return;
   }
-  if (!browser->worker && !start_worker(browser)) {
+  if (!browser->worker && !start_worker(browser, map)) {
     browser->status = "Could not start playback";
     return;
   }
@@ -400,7 +403,8 @@ int main(int count, char **arguments) {
     if (browser.worker) update_worker(&browser);
     if (!quit && !browser.worker && browser.warm_next) {
       browser.warm_next = 0;
-      start_worker(&browser);
+      // Just Dance selects the song while its database is being populated.
+      if (strcmp(editions[browser.edition].disc, "SDNE41")) start_worker(&browser, NULL);
     }
     if (!browser.playing) paint(&browser);
   }

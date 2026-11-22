@@ -1,8 +1,10 @@
 // Guest entry points and layouts from the SJOE41 revision 0 debug ELF.
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 
 #include "cpu.h"
+#include "input.h"
 #include "title.h"
 
 enum {
@@ -480,4 +482,119 @@ void jd3_probe_score(void) {
 void jd3_probe_recap(void) {
   if (!jd3_scoring) return;
   fprintf(stderr, "probe: original JD3 scoreboard entered\n");
+}
+
+enum {
+  SDNE41_TITLE_LOW = 0x53444e45,
+  JD1_INPUT_POLL = 0x801f5734,
+  JD1_TICKS_PER_MS = 60750,
+  JD1_CONFIRM_PERIOD_MS = 1300,
+  JD1_CONFIRM_HELD_MS = 400,
+  JD1_LOBBY_SETTLE_MS = 3000,
+  JD1_KPAD_HOLD = 0,
+  JD1_KPAD_TRIGGER = 4,
+  JD1_KPAD_RELEASE = 8,
+  JD1_KPAD_POINTER = 0x20,
+  JD1_KPAD_POINTER_VALID = 0x5e,
+  JD1_POINTER_SEEN = 2,
+};
+
+static int jd1_active, jd1_saved, jd1_movie_seen, jd1_score_seen, jd1_recap_seen;
+static unsigned jd1_key, jd1_step;
+static uint64_t jd1_lobby_ready;
+static char jd1_movie[48];
+
+int jd1_probe_direct(void) {
+  if (title->title_low != SDNE41_TITLE_LOW || title->program_check != 0xf3890e503b9a273aull)
+    return 0;
+  if (jd1_active) return 1;
+  const char *map = jd_couch_requested_map ? jd_couch_requested_map() : NULL;
+  if (!map) map = getenv("JD1_PROBE_MAP");
+  if (!map) return 0;
+  char *end;
+  unsigned long key = strtoul(map, &end, 10);
+  if (end == map || *end || key > UINT32_MAX) exit(2);
+  jd1_key = key;
+  jd1_active = 1;
+  return 1;
+}
+
+int jd1_probe_skip_song(void) {
+  if (!jd1_active) return 0;
+  if (cpu.r[5] != jd1_key) return 1;
+  snprintf(jd1_movie, sizeof jd1_movie, "%s", (const char *)host(cpu.r[9]));
+  fprintf(stderr, "probe: original Just Dance selected %s (%u)\n", jd1_movie, jd1_key);
+  return 0;
+}
+
+int jd1_probe_menu_choice(uint32_t code) {
+  // FLA_Menu_GetSelection stores each choice in the calling script's output.
+  static const struct { uint32_t caller, choice; } menu[] = {
+    {0x64cb4, 1},  // Quick Play
+    {0x12f4b0, 6}, // Regular
+    {0x13dad0, 0}, // One round
+    {0x14bfb4, 0}, // Automatic song pick
+  };
+  if (!jd1_active || jd1_step == sizeof menu / sizeof *menu ||
+      cpu.lr - code != menu[jd1_step].caller) return 0;
+  wr32(cpu.r[4], menu[jd1_step++].choice);
+  return 1;
+}
+
+void jd1_probe_input(uint32_t caller, uint32_t channel, uint32_t count, uint32_t status) {
+  if (!jd1_active || caller != JD1_INPUT_POLL || channel || !count || jd1_movie_seen) return;
+  if (jd1_step && !jd1_lobby_ready) return;
+  uint64_t elapsed = time_base() / JD1_TICKS_PER_MS;
+  int hold = elapsed % JD1_CONFIRM_PERIOD_MS < JD1_CONFIRM_HELD_MS;
+  if (jd1_lobby_ready) {
+    // The stock Full version button runs its Flash transition on a pointer click.
+    static const union { float f; uint32_t bits; } x = {.f = 0.36f}, y = {.f = 0.34f};
+    wr32(status + JD1_KPAD_POINTER, x.bits);
+    wr32(status + JD1_KPAD_POINTER + 4, y.bits);
+    wr8(status + JD1_KPAD_POINTER_VALID, JD1_POINTER_SEEN);
+    hold = hold && elapsed - jd1_lobby_ready >= JD1_LOBBY_SETTLE_MS;
+  }
+  static int previous;
+  wr32(status + JD1_KPAD_HOLD, (rd32(status + JD1_KPAD_HOLD) & ~BUTTON_A) | (hold ? BUTTON_A : 0));
+  wr32(status + JD1_KPAD_TRIGGER, (rd32(status + JD1_KPAD_TRIGGER) & ~BUTTON_A) |
+       (hold && !previous ? BUTTON_A : 0));
+  wr32(status + JD1_KPAD_RELEASE, (rd32(status + JD1_KPAD_RELEASE) & ~BUTTON_A) |
+       (!hold && previous ? BUTTON_A : 0));
+  previous = hold;
+}
+
+void jd1_probe_video_open(void) {
+  if (!jd1_lobby_ready || jd1_movie_seen) return;
+  const char *path = host(cpu.r[3]);
+  if (strncmp(path, "/videos/", 8)) return;
+  char wide[sizeof jd1_movie + 16], standard[sizeof wide];
+  snprintf(wide, sizeof wide, "/videos/%s169.bik", jd1_movie);
+  snprintf(standard, sizeof standard, "/videos/%s.bik", jd1_movie);
+  if (strcasecmp(path, wide) && strcasecmp(path, standard)) {
+    fprintf(stderr, "probe: expected %s, original Just Dance opened %s\n", wide, path);
+    exit(2);
+  }
+  jd1_movie_seen = 1;
+  fprintf(stderr, "probe: original Just Dance opened %s\n", path);
+}
+
+void jd1_probe_video_frame(void) {
+  if (jd1_movie_seen && jd_couch_gameplay_ready) jd_couch_gameplay_ready();
+}
+
+void jd1_probe_flash_value(uint32_t name_address) {
+  if (!jd1_active || !name_address) return;
+  const char *name = host(name_address);
+  if (!jd1_step && !jd1_saved && !strcmp(name, "_root.bouton1_pressed")) {
+    jd1_saved = 1;
+    cpu.r[3] = 1;
+  } else if (jd1_step == 4 && !jd1_lobby_ready && !strcmp(name, "_root.PlayLong")) {
+    jd1_lobby_ready = time_base() / JD1_TICKS_PER_MS;
+  } else if (jd1_movie_seen && !jd1_score_seen && !strcmp(name, "_root.Score_Current")) {
+    jd1_score_seen = 1;
+    if (jd_couch_game_event) jd_couch_game_event(0);
+  } else if (jd1_movie_seen && !jd1_recap_seen && cpu.r[3] == 1 && !strcmp(name, "_root.DisplayScoreReward")) {
+    jd1_recap_seen = 1;
+    if (jd_couch_game_event) jd_couch_game_event(1);
+  }
 }
