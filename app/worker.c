@@ -38,7 +38,8 @@ int session_read(int socket, SessionMessage *message, int flags) {
 }
 
 static int bridge_socket = -1;
-static int test_input, fast_boot;
+static int test_input;
+static unsigned boot_rate;
 enum { GAME_WINDOW_NORMAL, GAME_WINDOW_HIDDEN, GAME_WINDOW_READY, GAME_WINDOW_SHOWN };
 static atomic_int game_window;
 static atomic_int requested_song, boot_parked;
@@ -126,8 +127,8 @@ const char *jd_couch_wait_for_map(void) {
   return jd_couch_requested_map();
 }
 
-int jd_couch_fast_boot(void) {
-  return fast_boot;
+unsigned jd_couch_boot_rate(void) {
+  return boot_rate;
 }
 
 int jd_couch_boot_parked(void) {
@@ -305,7 +306,12 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   else if (!strcmp(disc, "SD2Y41") || !strcmp(disc, "SJ9E41") ||
            !strcmp(disc, "SJHE41") || !strcmp(disc, "SJDE41") || !strcmp(disc, "SJXE41"))
     map_variable = "JD2_PROBE_MAP";
-  fast_boot = socket >= 0 && map_variable;
+  if (socket >= 0) {
+    // The direct loaders and the older on-disc menus tolerate different boot rates.
+    boot_rate = map_variable ? 6 : 3;
+    if (!strcmp(disc, "SJXE41")) boot_rate = 8;
+    if (add_on && !strcmp(disc, "SJDE41")) boot_rate = 3;
+  }
   if (!map_variable) map_variable = "JD2014_PROBE_MAP";
   if (add_on && !strcmp(disc, "SJDE41")) map_variable = "JD3_PROBE_MAP";
   if (map && strcmp(map, "-")) setenv(map_variable, map, 1);

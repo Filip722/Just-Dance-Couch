@@ -1,0 +1,81 @@
+--- a/recomp/runtime/interrupts.c
++++ b/recomp/runtime/interrupts.c
+@@ -1,5 +1,6 @@
+ // Runs the game's timer and hardware interrupts. Translated code checks in here
+ // regularly, and the game's own handlers do the rest.
++#include <stdatomic.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <time.h>
+@@ -41,6 +42,11 @@
+ static uint64_t time_base_offset;
+ static uint64_t guest_time_offset;
+ 
++extern int jd_couch_fast_boot(void) __attribute__((weak));
++enum { BOOT_RATE = 3 };
++static uint64_t boot_started;
++static _Atomic uint64_t boot_finished;
++
+ #ifdef __APPLE__
+ // The game reads the clock constantly, and clock_gettime goes the long way round here.
+ static uint64_t monotonic_nanoseconds(void) {
+@@ -68,6 +74,7 @@
+ // The game reads the time base as ticks since 2000 in local time.
+ // A fixed offset, set once, keeps every interval and deadline exactly as it was.
+ void time_start(void) {
++  if (jd_couch_fast_boot && jd_couch_fast_boot()) boot_started = monotonic_ticks();
+   time_t now = time(0);
+ #ifdef _WIN32
+   struct tm local;
+@@ -81,7 +88,21 @@
+ #endif
+ }
+ 
+-uint64_t time_base(void) { return monotonic_ticks() + time_base_offset; }
++int time_boot_fast(void) {
++  return boot_started && !atomic_load_explicit(&boot_finished, memory_order_relaxed);
++}
++
++void time_boot_finish(void) {
++  if (time_boot_fast()) atomic_store_explicit(&boot_finished, monotonic_ticks(), memory_order_relaxed);
++}
++
++uint64_t time_base(void) {
++  uint64_t now = monotonic_ticks();
++  if (!boot_started) return now + time_base_offset;
++  uint64_t end = atomic_load_explicit(&boot_finished, memory_order_relaxed);
++  uint64_t scaled_until = end && end < now ? end : now;
++  return now + time_base_offset + (scaled_until - boot_started) * (BOOT_RATE - 1);
++}
+ 
+ uint64_t guest_time_base(void) { return time_base() + guest_time_offset; }
+ 
+@@ -173,6 +194,7 @@
+   // sleeping past a timer that's due could put it off for good.
+   int timer_due = decrementer_armed && decrementer_deadline <= now;
+   if (!irq_pending() && !timer_due) {
++    if (time_boot_fast()) wait /= BOOT_RATE;
+     struct timespec pause = {0, (long)(wait * NANOSECONDS / TIME_BASE_HZ)};
+     TIMELINE_BEGIN("game idle");
+     nanosleep(&pause, 0);
+--- a/recomp/runtime/audio.c
++++ b/recomp/runtime/audio.c
+@@ -14,6 +14,8 @@
+ #include "debug.h"
+ #include "gaps.h"
+ #include "hardware.h"
++
++extern int time_boot_fast(void);
+ 
+ #define TIME_BASE_HZ 60750000ull
+ #define BLOCK_BYTES 32u
+@@ -178,6 +180,9 @@
+       audio_dma_interrupt();
+     }
+   }
++  // The hidden boot runs on an accelerated guest clock. Start the host
++  // stream cleanly once the guest returns to real time ahead of the dance.
++  if (time_boot_fast()) return;
+   push_samples(samples, BLOCK_SAMPLES);
+   if (wave) save_samples(samples, BLOCK_SAMPLES);
+ }

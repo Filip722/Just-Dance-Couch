@@ -143,9 +143,10 @@ def prepare_upstream():
     prepare_archive(UPSTREAM, "wii-recomp-55fb408.tar.gz",
                     f"https://codeload.github.com/Zontex/wii-recomp/tar.gz/{REVISION}",
                     ARCHIVE_SHA256, f"wii-recomp-{REVISION}")
-    # Upgrade runtime source caches that already contain the old audio correction.
+    # Upgrade runtime source caches that already contain earlier patches.
     apply_patch(UPSTREAM, ROOT / "patches/obsolete/audio-drift-crossfade.patch", revert=True)
     apply_patch(UPSTREAM, ROOT / "patches/obsolete/worker-audio.patch", revert=True)
+    apply_patch(UPSTREAM, ROOT / "patches/obsolete/legacy-boot-clock.patch", revert=True)
     for patch in sorted((ROOT / "patches").glob("*.patch")):
         apply_patch(UPSTREAM, patch)
 

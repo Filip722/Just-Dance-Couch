@@ -38,10 +38,7 @@ void gh_probe_track(void) {
     next = GH_CAROUSEL;
   }
   if (gh_stage == GH_CAROUSEL && !strcmp(track, lobby)) next = GH_LOBBY;
-  if (gh_stage == GH_LOBBY && !strcmp(track, transition)) {
-    time_boot_finish();
-    next = GH_TRANSITION;
-  }
+  if (gh_stage == GH_LOBBY && !strcmp(track, transition)) next = GH_TRANSITION;
   if (!strcmp(track, "LevelManager_trk_GameLoop")) {
     time_boot_finish();
     next = GH_DANCE;

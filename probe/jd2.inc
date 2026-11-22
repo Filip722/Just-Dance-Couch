@@ -151,8 +151,11 @@ void jd2_probe_catalog(uint32_t buffer, uint32_t bytes) {
   }
   if (!jd2_edition || bytes != jd2_edition->catalog_bytes) return;
   // The first two words identify the original catalog's world record.
-  if (rd32(buffer) != 0x6a0e808cu || rd32(buffer + 4) != jd2_edition->catalog_signature ||
-      !jd2_requested_song()) return;
+  if (rd32(buffer) != 0x6a0e808cu || rd32(buffer + 4) != jd2_edition->catalog_signature) return;
+  // These menus need their established Wii Remote cadence after the catalog loads.
+  if (jd2_edition->title_low == SJDE41_TITLE_LOW || jd2_edition->title_low == GH_TITLE_LOW)
+    time_boot_controller_menu();
+  if (!jd2_requested_song()) return;
   uint32_t first = buffer + jd2_edition->first_slot_offset;
   if (dlc_index()) {
     if (!jd2_download_slot_ready || rd32(first) != __builtin_bswap32(jd2_edition->first_slot)) return;
@@ -199,6 +202,7 @@ void jd2_probe_track(void) {
       fprintf(stderr, "probe: the %s loader did not confirm the selected song\n", jd2_edition->name);
       exit(2);
     }
+    time_boot_finish();
     jd2_playing = 1;
     fprintf(stderr, "probe: original %s gameplay started\n", jd2_edition->name);
     if (jd_couch_gameplay_ready) jd_couch_gameplay_ready();
@@ -230,7 +234,6 @@ void jd2_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_
 void jd2_probe_map(void) {
   if (!jd2_catalog_ready || jd2_map_seen || cpu.lr != jd2_edition->load_group_caller) return;
   if (dlc_index() && cpu.r[4] == jd2_song->key) {
-    time_boot_finish();
     jd2_map_seen = 1;
     fprintf(stderr, "probe: original map loader requested %08x\n", jd2_song->key);
     return;
@@ -241,7 +244,6 @@ void jd2_probe_map(void) {
       fprintf(stderr, "probe: %s selected %08x instead of %08x\n", jd2_edition->name, cpu.r[4], jd2_song->key);
       exit(2);
     }
-    time_boot_finish();
     jd2_map_seen = 1;
     fprintf(stderr, "probe: original map loader requested %08x\n", jd2_song->key);
     return;

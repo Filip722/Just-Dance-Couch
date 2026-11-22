@@ -35,6 +35,7 @@ static const uint32_t SPLASH_END_DISPLAYING = 0x8004e334u;
 extern const char *jd_couch_requested_map(void) __attribute__((weak));
 extern const char *jd_couch_wait_for_map(void) __attribute__((weak));
 extern unsigned jd_couch_dlc_index(void) __attribute__((weak));
+extern void time_boot_controller_menu(void);
 extern void time_boot_finish(void);
 extern void jd_couch_library_ready(void) __attribute__((weak));
 extern int jd_couch_loading(void) __attribute__((weak));
@@ -129,6 +130,7 @@ int jd2014_probe_direct(void) {
   if (rd32(cpu.r[31] + ACTIVE_MODULE_OFFSET) != MODULE_MAIN_MENU) return 0;
   uint32_t manager = cpu.r[3], database = rd32(cpu.r[13] - DATABASE_SDA_OFFSET);
   if (!database || !guest_call(DATABASE_IS_READY, database)) return 0;
+  time_boot_finish();
   if (jd_couch_library_ready) jd_couch_library_ready();
   load_requested_map();
   if (!requested_map) return 0;
@@ -316,6 +318,7 @@ int jd2015_probe_direct(void) {
   uint32_t database = rd32(cpu.r[13] - port->database_offset);
   if (!database || !guest_call(port->database_ready, database)) return 0;
   active_port = port;
+  time_boot_finish();
   if (jd_couch_library_ready) jd_couch_library_ready();
   load_requested_map();
   if (!requested_map) return 0;
