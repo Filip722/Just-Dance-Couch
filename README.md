@@ -52,6 +52,8 @@ After the catalog warmed up, Girls Just Want To Have Fun appeared in about 6.6 s
 
 The Linux audio output starts with a 40 ms ALSA buffer and retries with 100 ms after its first underrun. On a private 48 kHz PipeWire graph with 2,048-frame periods, the 40 ms configuration failed before Jailhouse Rock started. The retry restored 24 seconds of uninterrupted gameplay audio in the capture. The mixer output also matched the disc track in comparisons during gameplay.
 
+The runtime waits for the Wii audio DMA interrupt handler to finish preparing the next buffer before catching up. This prevents repeated 3 ms audio buffers during gameplay. In a ten-second sample of **Big Girl (You Are Beautiful)**, waveform correlation with the disc track improved from 0.516 to 0.999996. The private PipeWire sweep captured gameplay audio from all twelve disc editions and both the Just Dance 4 and 2015 **Gangnam Style** DLC variants.
+
 ## Build and run
 
 The build uses Python 3.12 or newer, Clang, CMake, Ninja, pkg-config, FFmpeg, GNU binutils and patch, and the GLFW, SDL3, Vulkan, shaderc, ALSA, Fontconfig, FreeType and libusb-1.0 development libraries. Wii Recomp and the fallback nodtool download are pinned. On this host the cache supplies the `clang-19` shim, the verified nodtool, and Debian development packages staged under `deps/usr`. The build accepts system dependencies on other machines. [Wii Recomp source and requirements](https://github.com/Zontex/wii-recomp/tree/55fb408eb1f2df75e914524dc092e69c70739ded)

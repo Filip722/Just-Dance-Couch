@@ -1,0 +1,50 @@
+--- a/recomp/runtime/hardware.c
++++ b/recomp/runtime/hardware.c
+@@ -25,6 +25,7 @@
+ #define CACHE_LINE_BYTES 32u
+ #define PI_CAUSE 0xcc003000u
+ #define PI_MASK 0xcc003004u
++#define INTERRUPTS_ENABLED 0x8000u
+ #define VI_DISPLAY_INTERRUPT 0xcc002030u
+ #define VI_TIMING_FIRST 0xcc002000u  // Vertical and horizontal timing, and the blanking intervals.
+ #define VI_TIMING_END 0xcc002014u
+@@ -169,10 +170,13 @@
+ }
+ 
+ 
+-// The audio DMA's interrupt is flagged, enabled, and the game hasn't answered it yet.
++// The game can clear the audio DMA flag before its handler finishes filling and
++// scheduling the next buffer. Catch-up must also wait while interrupts are masked,
++// or it can replay the buffer that the handler is about to replace.
+ int audio_dma_interrupt_unanswered(void) {
+   uint32_t control = get(DSP_CONTROL, 2);
+-  return (control & DSP_AUDIO_FLAG) && (control & DSP_AUDIO_FLAG << 1);
++  return (control & (DSP_AUDIO_FLAG << 1)) &&
++         ((control & DSP_AUDIO_FLAG) || !(cpu.msr & INTERRUPTS_ENABLED));
+ }
+ 
+ void audio_dma_interrupt(void) {
+--- a/test/c/test_hardware_rare.c
++++ b/test/c/test_hardware_rare.c
+@@ -142,6 +142,21 @@
+   dsp_interrupt();  // Disabled now.
+   CHECK(!irq_pending());
+   hw_write(DSP, 0x0080, 2);
++
++  // A handler can acknowledge the DMA interrupt before it has set up the next buffer.
++  hw_write(DSP, DSP_AUDIO_FLAG << 1, 2);
++  cpu.msr |= INTERRUPTS_ENABLED;
++  audio_dma_interrupt();
++  CHECK(audio_dma_interrupt_unanswered());
++  cpu.msr &= ~INTERRUPTS_ENABLED;
++  hw_write(DSP, (DSP_AUDIO_FLAG << 1) | DSP_AUDIO_FLAG, 2);
++  CHECK(!irq_pending());
++  CHECK(audio_dma_interrupt_unanswered());
++  cpu.msr |= INTERRUPTS_ENABLED;
++  CHECK(!audio_dma_interrupt_unanswered());
++  hw_write(DSP, 0, 2);
++  cpu.msr &= ~INTERRUPTS_ENABLED;
++  CHECK(!audio_dma_interrupt_unanswered());
+   CHECK_EQ(gaps, 0);
+ }
+ 
