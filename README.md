@@ -2,7 +2,7 @@
 
 Play your Just Dance Wii collection on Linux from a single fullscreen song picker. Just Dance Couch recompiles your own Wii disc backups with Wii Recomp and launches each song with its original choreography and motion scoring.
 
-[Quick start](#quick-start) · [Disc images and hashes](docs/disc-images.md) · [Wii Remotes](#wii-remotes) · [Configuration](#configuration)
+[Quick start](#quick-start) · [Disc images and hashes](docs/disc-images.md) · [Wii Remotes](#wii-remotes) · [Configuration](#configuration) · [License](#license-and-credits)
 
 ![The Just Dance 2014 song grid with Get Lucky selected](docs/screenshots/song-grid.webp)
 
@@ -122,9 +122,11 @@ The DLC page appears after the last installed edition. For a song with multiple 
 - **Adapter unavailable.** Check that your module appears as `057e:0305` in `lsusb`, that your user can access it, and that Dolphin has released it.
 - **A song fails to open.** Read `game-<launcher-pid>.log` in the cache directory. Set `JUST_DANCE_GAME_TRACE=1` before launching to send the game trace to the terminal.
 
-## Credits
+## License and credits
 
-Just Dance Couch is an independent fan project. Just Dance and the game artwork in these screenshots belong to their respective owners. Supply your own disc and DLC backups locally.
+The original Just Dance Couch source code and documentation are available under the MIT License. [License](LICENSE)
 
-- Wii Recomp provides the static recompiler and native console runtime. [Wii Recomp](https://github.com/Zontex/wii-recomp) · [Upstream license](https://github.com/Zontex/wii-recomp/blob/55fb408eb1f2df75e914524dc092e69c70739ded/LICENSE)
-- BTstack provides direct USB Bluetooth support. [BTstack 1.8.3 license](https://github.com/bluekitchen/btstack/blob/v1.8.3/LICENSE)
+- Wii Recomp provides the static recompiler and native console runtime. The patches in `patches/` modify Wii Recomp and carry its GPL-3.0-or-later terms. The Git history records the patch dates. [Wii Recomp](https://github.com/Zontex/wii-recomp) · [GPLv3](LICENSES/GPL-3.0.txt)
+- BTstack provides direct USB Bluetooth support. The patch in `deps/btstack-usb.patch` modifies the USB transport (copyright © 2014 BlueKitchen GmbH) under BTstack 1.8.3's personal-use and noncommercial terms. [BTstack license](LICENSES/BTstack-1.8.3.txt)
+
+Just Dance Couch is an independent fan project. Just Dance and the game artwork in these screenshots belong to their respective owners. Build locally using your own disc and DLC backups.
