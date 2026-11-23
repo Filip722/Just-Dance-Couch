@@ -1,93 +1,130 @@
 # Just Dance Couch
 
-Just Dance Couch is a native Linux launcher for your own Just Dance Wii backups. Browse an alphabetical fullscreen grid with music and coach video previews, then launch straight into the original dance and scoring. The launcher compiles each game locally and warms the selected edition while you browse.
+Play your Just Dance Wii collection on Linux from a single fullscreen song picker. Just Dance Couch recompiles your own Wii disc backups with Wii Recomp and launches each song with its original choreography and motion scoring.
 
-## Build from source
+[Quick start](#quick-start) · [Disc images and hashes](docs/disc-images.md) · [Wii Remotes](#wii-remotes) · [Configuration](#configuration)
 
-Use Linux on an x86-64-v3 CPU with a working Vulkan driver. Install Python 3.12 or newer, Clang (`clang` on your `PATH`), CMake, Ninja, `pkg-config`, FFmpeg, GNU binutils, the LZO2 runtime library, and `patch`. Install the development packages for GLFW, SDL3, Vulkan, shaderc, ALSA, Fontconfig, FreeType, and libusb-1.0. If SDL3 is installed in a custom location, export `SDL3_PREFIX` with its installation path before building.
+![The Just Dance 2014 song grid with Get Lucky selected](docs/screenshots/song-grid.webp)
 
-The launcher build requires the **12 USA Wii disc backups** in the first block below. You can also build the three Kids games, both Disney Party games, and **Just Dance 2020** to include them in the picker. Use **revision 1** for Just Dance 3 and **revision 0** for the other discs. Just Dance 2020 uses the verified **European** revision. The build checks each disc's region, revision, and executable, downloads pinned dependencies as needed, and stores the extracted discs, compiled code, and previews locally.
+## Features
 
-From the repository root, set `games_dir` and the filenames to match your backups. For optional Wii DLC, put your add-on WADs in the `DLC` subdirectory and install Python's `cryptography` package. An empty or absent DLC directory produces a disc-only picker.
+- **One song library.** Browse an alphabetical, five-column grid with music previews and coach video where available. Editions appear in Wii release order.
+- **Straight to the dance.** The launcher warms the current edition while you browse, skips the intro and game menus, and brings you back to the grid on HOME.
+- **Up to four Wii Remotes.** Players get numbered slots as they connect and can pick their own dancer on supported multi-coach routines.
+- **18 supported Wii editions.** Browse Classic routines through Just Dance 2020, including Summer Party and Greatest Hits. Kids and Disney Party use their on-disc song lists. Supported add-ons share a DLC page.
+- **Consistent volume.** Preview and gameplay levels use Just Dance 4 as their reference, with peak protection in gameplay.
+
+## Quick start
+
+### 1. Install the build dependencies
+
+Use a Linux desktop on an x86-64-v3 CPU (AVX2 and FMA) with a working Vulkan driver, Python 3.12 or newer, and several gigabytes of free cache space per disc. Install Clang, CMake, Ninja, pkg-config, FFmpeg, GNU binutils, patch, the LZO2 runtime, and the development libraries below.
+
+On Debian 13, install the packages with apt.
 
 ```bash
-(
-  set -e
-  games_dir="$HOME/Wii/Just Dance"
-  while IFS='|' read -r disc image; do
-    python3 -B pilot.py build --disc "$disc" --image "$games_dir/$image"
-  done <<'DISCS'
-SDNE41|Just Dance.rvz
-SD2Y41|Just Dance 2.rvz
-SJ9E41|Just Dance Summer Party.rvz
-SJDE41|Just Dance 3.rvz
-SJHE41|Just Dance Greatest Hits.rvz
-SJXE41|Just Dance 4.rvz
-SJOE41|Just Dance 2014.rvz
-SE3E41|Just Dance 2015.rvz
-SJNE41|Just Dance 2016.rvz
-SZ7E41|Just Dance 2017.rvz
-SE8E41|Just Dance 2018.rvz
-S5EE41|Just Dance 2019.rvz
-DISCS
-  while IFS='|' read -r disc image; do
-    if [ -f "$games_dir/$image" ]; then
-      python3 -B pilot.py build --disc "$disc" --image "$games_dir/$image"
-    fi
-  done <<'OPTIONAL_DISCS'
-SDZE41|Just Dance Kids.rvz
-SJZE41|Just Dance Kids 2.rvz
-SJ6E41|Just Dance Disney Party.rvz
-SJ7E41|Just Dance Kids 2014.rvz
-S5DE41|Just Dance Disney Party 2.rvz
-S2UP41|Just Dance 2020 (Europe) (En,Fr,De,Es,It,Nl).rvz
-OPTIONAL_DISCS
-  python3 -B pilot.py couch --dlc-dir "$games_dir/DLC"
-)
+sudo apt install git ca-certificates build-essential python3 clang cmake ninja-build \
+  pkg-config ffmpeg binutils patch liblzo2-2 libsdl3-dev libglfw3-dev libvulkan-dev \
+  libshaderc-dev libasound2-dev libfontconfig-dev libfreetype-dev libusb-1.0-0-dev
 ```
 
-## Play
+### 2. Build one game
 
-Connect a Nintendo Wii Bluetooth module (`057e:0305`) and make sure your user can read and write to its USB device. Close Dolphin if it has the module open.
+Clone the repository and point the builder at an ISO, RVZ, or WBFS backup of a disc you own. This example uses **Just Dance 2014 (USA, revision 0)**. Set `image` to your backup's path. The [disc list](docs/disc-images.md) has the ID, region, revision, and SHA-256 for each edition.
+
+```bash
+git clone https://github.com/Filip722/Just-Dance-Couch.git
+cd Just-Dance-Couch
+image="$HOME/Wii/Just Dance/Just Dance 2014.rvz"
+python3 -B pilot.py build --disc SJOE41 --image "$image"
+python3 -B pilot.py couch
+```
+
+The first build downloads pinned tools and runtime sources, verifies the disc, and compiles its Wii code for your PC. The `couch` command builds the picker with all the supported editions you have compiled in that cache. Subsequent launches use those local files directly.
+
+### 3. Open the picker
+
+```bash
+couch="${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/bin/just-dance-couch"
+"$couch" --loopback
+```
+
+Use the arrow keys and Enter to try the picker and launch a song. For motion scoring, use a Wii Remote. See [Wii Remotes](#wii-remotes).
+
+To add another edition, run `pilot.py build` with its disc ID and image path, then rerun `pilot.py couch`.
+
+## Screenshots
+
+| Choose your dancer | Four-player gameplay |
+| --- | --- |
+| ![The Get Lucky coach picker with Player 1 locked in on the silver coach](docs/screenshots/coach-picker.webp) | ![Ghostbusters running in Just Dance 2014 with four player markers and the original move pictograms](docs/screenshots/gameplay.webp) |
+
+## Wii Remotes
+
+Connect a Nintendo Wii Bluetooth module (`057e:0305`) over USB. Close Dolphin if it is using the module. Your desktop user needs read and write access to the device.
+
+On Linux desktops with systemd, this udev rule grants access to the active local user. Reconnect the module after reloading the rules.
+
+```bash
+sudo tee /etc/udev/rules.d/70-just-dance-couch.rules >/dev/null <<'RULE'
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="057e", ATTR{idProduct}=="0305", TAG+="uaccess"
+RULE
+sudo udevadm control --reload-rules
+```
 
 ```bash
 couch="${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/bin/just-dance-couch"
 "$couch" --usb-wii
 ```
 
-Connect up to four Wii Remotes in the picker. For first-time pairing, press the red **SYNC** button inside each remote's battery compartment. Wait for its numbered light to go solid before waking or syncing the next one. On later launches, wake the paired remotes with a button press.
+On first pairing, press the red **SYNC** button inside the battery compartment. Wait for the numbered light to go solid before pairing the next remote. On later launches, press a button to wake each paired remote. New connections fill the lowest free slot. Player 1 starts songs and can exit the launcher by pressing **−** twice quickly in the grid or coach picker.
 
-Players get the lowest free number as they connect. Other players keep their numbers when a remote disconnects. The lowest-numbered connected remote controls the picker and can return to it during a dance. If Player 1 disconnects, wake or reconnect a remote to fill that slot before starting another song. To exit and release the module, press **−** twice quickly on Player 1’s remote while the song grid or coach picker is open. **Escape** exits from the song grid.
+To use a BlueZ-paired remote, run `"$couch"` without flags. This mode needs a readable and writable `hidraw` device with HID reporting available to userspace.
 
-Use `"$couch" --loopback` to check the picker and launch flow with a keyboard. Running `"$couch"` without flags uses a BlueZ-paired Wii Remote through a hidraw device with read and write permissions and a driver that leaves HID reporting to userspace.
+## Controls
 
-| Action | Wii Remote | Keyboard in loopback |
+| Action | Wii Remote | Keyboard with `--loopback` |
 | --- | --- | --- |
 | Browse songs | D-pad | Arrow keys |
-| Start a dance or dismiss the results | A | Enter |
-| Return to the picker during a dance | HOME | Escape |
+| Select a song or dismiss results | A | Enter |
+| Skip coach selection on a multi-coach song | + | Space |
+| Return from a dance | HOME | Escape |
+| Exit from the song grid | − twice on Player 1 | Escape |
 
-From the first song row, press **Up** to focus the edition name. Use **Left** and **Right** to switch editions, then **Down** to return to the songs. Hold a direction to keep moving.
+Hold a direction to keep moving. From the top row, press **Up** to focus the edition name, **Left** or **Right** to switch editions, then **Down** to return to the songs.
 
-Press **A** on a multi-dancer song in **Just Dance 3**, **Just Dance Greatest Hits**, **Just Dance 4**, or **Just Dance 2014–2020** to open the coach picker. This also works with supported DLC in those editions. Each player uses **Left** or **Right** to choose, **A** to lock in, and **B** to unlock. Player 1 presses **+** to start, and the game assigns any unlocked players automatically. Press **+** from the grid for Quick Start. With the keyboard, **Enter**, **Backspace**, and **Space** act as **A**, **B**, and **+**. The original **Just Dance** has solo choreography. **Just Dance 2** and **Summer Party** assign duet roles by Wii Remote slot. The Kids and Disney Party games use their default dancer assignments.
+On multi-coach songs that support the picker, each player chooses with **Left** or **Right**, locks in with **A** (Enter), and unlocks with **B** (Backspace). Player 1 starts with **+** (Space). The game assigns any unlocked players. The coach picker is available in Just Dance 3, Greatest Hits, Just Dance 4, and Just Dance 2014–2020. Just Dance 2 and Summer Party assign duet roles by remote slot. Kids and Disney Party use their own dancer assignments.
 
-## Song library and DLC
+## DLC
 
-The library includes Classic routines from the main series and the on-disc song lists from Kids and Disney Party. The **DLC** page follows the latest installed edition when add-ons are available. The build imports USA Wii add-ons for **Just Dance 2–4**, **Just Dance 2014**, and **Just Dance 2015**.
+Build the corresponding USA disc first. Just Dance Couch imports owned Wii add-on WADs for Just Dance 2, 3, 4, 2014, and 2015. Install Python's `cryptography` package (`python3-cryptography` on Debian) and pass the directory that contains the WADs.
 
-When a song appears in several DLC editions, the DLC page shows the newest available add-on copy. Within that edition, the standard DLC routine takes priority.
+```bash
+python3 -B pilot.py couch --dlc-dir "$HOME/Wii/Just Dance/DLC"
+```
 
-## Audio levels
+The DLC page appears after the last installed edition. For a song with multiple available DLC copies, the newest edition takes priority. Each disc keeps its own songs.
 
-Per-song loudness uses Just Dance 4 as the reference, around −10 LUFS for gameplay and −12.5 LUFS for picker previews. Gameplay has peak protection. The build measures the cached previews with FFmpeg and reuses those measurements until the files change.
+## Configuration
 
-## Local files and logs
+| Setting | Default and usage |
+| --- | --- |
+| Disc images | Pass `--image PATH` to `pilot.py build`. Set `JUST_DANCE_BACKUPS` to change the default directory from `~/Wii/Just Dance`. The [disc list](docs/disc-images.md) gives the filenames used without `--image`. |
+| Add-on WADs | Set `--dlc-dir PATH` when running `pilot.py couch`. The default is the `DLC` subdirectory of the backup directory. |
+| Builds and extracted media | `${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/`. Set `XDG_CACHE_HOME` to an absolute path before building and launching to use a different drive. |
+| Saves and Wii Remote pairings | `${XDG_DATA_HOME:-$HOME/.local/share}/just-dance-couch/`. Set `XDG_DATA_HOME` to an absolute path to use a different data directory. |
+| Custom SDL3 install | Export `SDL3_PREFIX` with the install prefix before building. |
+| Build parallelism | Both `build` and `couch` accept `--jobs N` and default to six jobs. |
 
-- `${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/` holds the extracted discs, builds, previews, and `game-<launcher-pid>.log` files.
-- `${XDG_DATA_HOME:-$HOME/.local/share}/just-dance-couch/` holds saves and USB Wii Remote pairing data.
+### Troubleshooting
 
-Set `JUST_DANCE_GAME_TRACE=1` when launching to print the game trace in the terminal.
+- **Disc revision or executable mismatch.** Check the ID, region, revision, and extracted executable hash against the [disc list](docs/disc-images.md).
+- **Adapter unavailable.** Check that your module appears as `057e:0305` in `lsusb`, that your user can access it, and that Dolphin has released it.
+- **A song fails to open.** Read `game-<launcher-pid>.log` in the cache directory. Set `JUST_DANCE_GAME_TRACE=1` before launching to send the game trace to the terminal.
 
 ## Credits
 
-Just Dance Couch is an independent fan project. Wii Recomp provides the native game runtime, and BTstack handles direct USB Bluetooth. [Wii Recomp](https://github.com/Zontex/wii-recomp) · [BTstack 1.8.3 license](https://github.com/bluekitchen/btstack/blob/v1.8.3/LICENSE)
+Just Dance Couch is an independent fan project. Just Dance and the game artwork in these screenshots belong to their respective owners. Supply your own disc and DLC backups locally.
+
+- Wii Recomp provides the static recompiler and native console runtime. [Wii Recomp](https://github.com/Zontex/wii-recomp) · [Upstream license](https://github.com/Zontex/wii-recomp/blob/55fb408eb1f2df75e914524dc092e69c70739ded/LICENSE)
+- BTstack provides direct USB Bluetooth support. [BTstack 1.8.3 license](https://github.com/bluekitchen/btstack/blob/v1.8.3/LICENSE)

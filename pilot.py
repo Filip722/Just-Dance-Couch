@@ -63,8 +63,7 @@ EMBEDDED_TITLES = {
     "SE3E41": "jd2015_title", "SJNE41": "title_SJNE41", "S5DE41": "title_S5DE41",
     **{disc: f"title_{disc}" for disc in EDITIONS if disc != "SJNE41"},
 }
-OPTIONAL_TITLES = {*family.FAMILY_EDITIONS, "S2UP41"}
-BACKUPS = Path("/mnt/synology/Games/wii")
+BACKUPS = Path(os.environ.get("JUST_DANCE_BACKUPS") or Path.home() / "Wii" / "Just Dance").expanduser()
 
 
 def app_directory(variable, fallback):
@@ -301,14 +300,15 @@ def link_command(folder, target, env):
 
 
 def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
+    titles = {
+        disc_id: symbol for disc_id, symbol in EMBEDDED_TITLES.items()
+        if (RUNTIME / f"build-{disc_id}/title.so").is_file()
+    }
+    if not titles:
+        raise ValueError("Build at least one supported disc first with python3 pilot.py build --disc ID --image PATH")
+
     prepare_upstream()
     env = build_environment()
-    titles = {}
-    for disc_id, symbol in EMBEDDED_TITLES.items():
-        if (RUNTIME / f"build-{disc_id}/title.so").is_file():
-            titles[disc_id] = symbol
-        elif disc_id not in OPTIONAL_TITLES:
-            raise ValueError(f"Run python3 pilot.py build --disc {disc_id} first")
     prepare_probe_adapter()
 
     collection, coaches = {}, {}
@@ -367,7 +367,7 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
             coaches.update(((disc_id, key), count) for key, count in counts.items())
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
 
-    dlc_songs = dlc.prepare_dlc(dlc_directory, CACHE / "dlc", CACHE / "discs", jobs, coaches)
+    dlc_songs = dlc.prepare_dlc(dlc_directory, CACHE / "dlc", CACHE / "discs", titles, jobs, coaches)
     levels = prepare_loudness(CACHE, collection, dlc_songs, jobs)
     console = RUNTIME / "build"
     subprocess.run(["ninja", "-j", str(jobs), "wii-recomp"], cwd=console, env=env, check=True)
@@ -434,9 +434,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     compiler = commands.add_parser("build", help="extract the owned disc and build locally")
-    compiler.add_argument("--image", type=Path)
+    compiler.add_argument("--image", type=Path, help="path to the owned Wii disc image (ISO, RVZ or WBFS)")
     compiler.add_argument("--jobs", type=int, default=6)
-    couch = commands.add_parser("couch", help="link the built titles and the browser into one executable")
+    couch = commands.add_parser("couch", help="link all locally built titles and the browser into one executable")
     couch.add_argument("--jobs", type=int, default=6)
     couch.add_argument("--dlc-dir", type=Path, default=BACKUPS / "DLC", help="directory of owned Wii add-on WADs")
     runner = commands.add_parser("boot", help="run a title in strict-native mode")

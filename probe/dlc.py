@@ -40,7 +40,7 @@ def decrypt(data, key, iv):
     return cipher.update(data) + cipher.finalize()
 
 
-def import_wad(wad, cache):
+def import_wad(wad, cache, built_discs):
     with wad.open("rb") as source:
         file_bytes = wad.stat().st_size
         if file_bytes < 32:
@@ -58,7 +58,7 @@ def import_wad(wad, cache):
         tmd = source.read(tmd_bytes)
         title = tmd[0x18c:0x194]
         disc = WII_ADD_ON_TITLES.get(title[4:]) if title[:4] == b"\0\1\0\5" else None
-        if not disc:
+        if disc not in built_discs:
             return None
         count, = struct.unpack_from(">H", tmd, 0x1de)
         if (count * 36 + 0x1e4 != len(tmd) or title != ticket[0x1dc:0x1e4] or ticket[0x1f1] != 0 or
@@ -247,14 +247,14 @@ def lyn_catalog(disc, pack, contents, jobs, coaches):
     return songs
 
 
-def prepare_dlc(folder, cache, discs, jobs, coaches=None):
+def prepare_dlc(folder, cache, discs, built_discs, jobs, coaches=None):
     wads = sorted(path for path in folder.glob("*") if path.suffix.lower() == ".wad")
     if not wads:
         return []
     cache.mkdir(parents=True, exist_ok=True)
     songs, imported = {}, set()
     for wad in wads:
-        pack = import_wad(wad, cache)
+        pack = import_wad(wad, cache, built_discs)
         if pack is None or pack[1] in imported:
             continue
         disc, local, contents = pack
