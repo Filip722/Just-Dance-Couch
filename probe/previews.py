@@ -1,7 +1,7 @@
 """Build short local audio and coach previews from verified Wii discs."""
 
 from array import array
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from itertools import repeat
 from pathlib import Path
 import struct
@@ -17,6 +17,7 @@ PREVIEW_ENTRIES = {"justdance": 99.8319166667, "getlucky": 100.8291458333}
 PREVIEW_SECONDS = 8
 PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_FPS = 160, 120, 10
 FRAME_BYTES = PREVIEW_WIDTH * PREVIEW_HEIGHT * 3
+VIDEO_BYTES = FRAME_BYTES * PREVIEW_FPS * PREVIEW_SECONDS
 
 
 def archive_entries(folder, *, compressed=False):
@@ -136,6 +137,50 @@ def fade_preview(samples, rate):
     return samples
 
 
+def has_preview_video(destination, key):
+    return ((destination / f"{key}.rgb").is_file() or
+            ((destination / f"{key}.mkv").is_file() and (destination / f"{key}.thumb").is_file()))
+
+
+def compress_video(rgb, destination, key):
+    raw = rgb.read_bytes()
+    if len(raw) != VIDEO_BYTES:
+        raise ValueError(f"{rgb} is not a complete preview")
+    with tempfile.TemporaryDirectory(dir=destination) as temp:
+        staging = Path(temp)
+        clip = staging / "preview.mkv"
+        base = ["ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-filter_threads", "1"]
+        raw_format = ["-f", "rawvideo", "-pix_fmt", "rgb24"]
+        subprocess.run([
+            *base, *raw_format, "-video_size", f"{PREVIEW_WIDTH}x{PREVIEW_HEIGHT}",
+            "-framerate", str(PREVIEW_FPS), "-i", str(rgb), "-an",
+            "-c:v", "ffv1", "-pix_fmt", "bgr0", "-threads", "1", str(clip),
+        ], check=True)
+        decoded = subprocess.check_output([*base, "-i", str(clip), *raw_format, "-threads", "1", "-"])
+        if decoded != raw:
+            raise ValueError(f"{rgb} failed the lossless preview check")
+        middle = (PREVIEW_FPS * PREVIEW_SECONDS // 2) * FRAME_BYTES
+        poster = staging / "preview.thumb"
+        poster.write_bytes(raw[middle:middle + FRAME_BYTES])
+        poster.replace(destination / f"{key}.thumb")
+        clip.replace(destination / f"{key}.mkv")
+
+
+def compress_cached_previews(cache, jobs):
+    legacy = sorted([
+        *cache.glob("previews/*/*.rgb"),
+        *cache.glob("dlc/*/previews/*.rgb"),
+    ])
+    pending = [rgb for rgb in legacy if not (
+        rgb.with_suffix(".mkv").is_file() and rgb.with_suffix(".thumb").is_file()
+    )]
+    if pending:
+        with ThreadPoolExecutor(max_workers=min(6, jobs)) as workers:
+            list(workers.map(compress_video, pending, (rgb.parent for rgb in pending),
+                             (rgb.stem for rgb in pending)))
+        print(f"Compressed {len(pending)} cached video previews", flush=True)
+
+
 def write_preview(key, destination, cue, rate, samples, video, *, seek_before_input=True):
     with tempfile.TemporaryDirectory(dir=destination) as staging:
         staging = Path(staging)
@@ -159,8 +204,8 @@ def write_preview(key, destination, cue, rate, samples, video, *, seek_before_in
                 "-pix_fmt", "rgb24", "-f", "rawvideo", str(rgb),
             ]
             result = subprocess.run(args, capture_output=True)
-            if result.returncode == 0 and rgb.stat().st_size == FRAME_BYTES * PREVIEW_FPS * PREVIEW_SECONDS:
-                rgb.replace(destination / f"{key}.rgb")
+            if result.returncode == 0 and rgb.is_file() and rgb.stat().st_size == VIDEO_BYTES:
+                compress_video(rgb, destination, key)
             else:
                 print(f"preview: {key} coach video unavailable", flush=True)
         if samples is not None:
@@ -207,7 +252,7 @@ def prepare_previews(disc: Path, destination: Path, jobs=6, songs=None):
         if songs is not None and key not in songs:
             continue
         if (destination / f"{key}.wav").is_file() and (
-            "video" not in entries or (destination / f"{key}.rgb").is_file()
+            "video" not in entries or has_preview_video(destination, key)
         ):
             continue
         pending.append((key, entries["audio"], entries["track"], entries.get("video")))

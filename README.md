@@ -8,7 +8,7 @@ Play your Just Dance Wii collection on Linux from a single fullscreen song picke
 
 ## Features
 
-- **One song library.** Browse an alphabetical, five-column grid with music previews and coach video where available. Editions appear in Wii release order.
+- **One song library.** Browse an alphabetical, five-column grid with music and lossless coach video previews where available. Editions appear in Wii release order.
 - **Straight to the dance.** The launcher warms the current edition while you browse, skips the intro and game menus, and brings you back to the grid on HOME.
 - **Up to four Wii Remotes.** Players get numbered slots as they connect and can pick their own dancer on supported multi-coach routines.
 - **18 supported Wii editions.** Browse Classic routines through Just Dance 2020, including Summer Party and Greatest Hits. Kids and Disney Party use their on-disc song lists. Supported add-ons share a DLC page.
@@ -49,7 +49,7 @@ couch="${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/bin/just-dance-couch"
 "$couch" --loopback
 ```
 
-Use the arrow keys and Enter to try the picker and launch a song. For motion scoring, use a Wii Remote. See [Wii Remotes](#wii-remotes).
+Use the arrow keys and Enter to try the picker and launch a song. Keep FFmpeg on your `PATH` for coach video previews. For motion scoring, use a Wii Remote. See [Wii Remotes](#wii-remotes).
 
 To add another edition, run `pilot.py build` with its disc ID and image path, then rerun `pilot.py couch`.
 

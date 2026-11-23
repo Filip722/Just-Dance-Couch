@@ -4,7 +4,7 @@ from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
 import struct
 
-from probe.previews import decode_dsp_clip, read_entry, write_preview
+from probe.previews import decode_dsp_clip, has_preview_video, read_entry, write_preview
 
 
 # The LyN Wii RIFF codec 0x5050 uses fixed Nintendo DSP coefficients.
@@ -103,7 +103,7 @@ def write_lyn_clip(key, destination, audio, movie):
 
 def prepare_lyn_previews(disc, destination, songs, archive, jobs, *, movie_extension="bik"):
     pending = {key: names for key, names in songs.items()
-               if not ((destination / f"{key}.wav").is_file() and (destination / f"{key}.rgb").is_file())}
+               if not ((destination / f"{key}.wav").is_file() and has_preview_video(destination, key))}
     if not pending:
         return
     destination.mkdir(parents=True, exist_ok=True)

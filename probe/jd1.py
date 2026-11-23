@@ -4,7 +4,7 @@ from array import array
 import struct
 import sys
 
-from probe.previews import PREVIEW_SECONDS, fade_preview, write_preview
+from probe.previews import PREVIEW_SECONDS, fade_preview, has_preview_video, write_preview
 
 
 # Song ID, title, artist, coach stem and sound bank from the SDNE41 Global_AddSong calls.
@@ -99,7 +99,7 @@ def prepare_previews(disc, destination):
     videos = disc / "files" / "videos"
     packages = disc / "files" / "sound/bin/Wii/Packages"
     for key, _, _, stem, bank in SONGS:
-        needs_video = not (destination / f"{key}.rgb").is_file()
+        needs_video = not has_preview_video(destination, key)
         needs_audio = not (destination / f"{key}.wav").is_file()
         if not (needs_video or needs_audio):
             continue

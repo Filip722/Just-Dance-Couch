@@ -5,6 +5,7 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <limits.h>
+#include <unistd.h>
 
 enum {
   WIDTH = 1440, HEIGHT = 810, FONT_COUNT = 3,
@@ -17,6 +18,7 @@ enum {
   FIRST_GLYPH = 32, GLYPH_COUNT = 224, ATLAS_COLUMNS = 16,
   PREVIEW_WIDTH = 160, PREVIEW_HEIGHT = 120, PREVIEW_FRAME_MS = 100,
   PREVIEW_PITCH = PREVIEW_WIDTH * 3, PREVIEW_FRAME_BYTES = PREVIEW_PITCH * PREVIEW_HEIGHT,
+  PREVIEW_FRAMES = 8000 / PREVIEW_FRAME_MS, PREVIEW_BYTES = PREVIEW_FRAMES * PREVIEW_FRAME_BYTES,
 };
 enum GridFont { DETAIL, TILE, HEADING };
 
@@ -36,6 +38,13 @@ typedef struct {
   SDL_AudioSpec format;
 } Preview;
 
+typedef struct {
+  SDL_Thread *thread;
+  SDL_AtomicInt cancel, ready;
+  char path[PATH_MAX];
+  uint8_t *frames;
+} PreviewDecode;
+
 struct SongGrid {
   SDL_Renderer *renderer;
   Font fonts[FONT_COUNT];
@@ -43,6 +52,7 @@ struct SongGrid {
   SDL_AudioStream *audio;
   SDL_Texture *video;
   uint8_t *frames;
+  PreviewDecode decode;
   size_t frame_count, last_frame;
   const Song *preview;
   const Song *portrait_song;
@@ -130,12 +140,13 @@ static int preview_path(char *path, const SongGrid *grid, const Edition *edition
 
 static SDL_Texture *coach_thumbnail(SongGrid *grid, const Edition *edition, const Song *song) {
   char path[PATH_MAX];
-  if (!preview_path(path, grid, edition, song, "rgb")) return NULL;
+  if (!preview_path(path, grid, edition, song, "thumb")) return NULL;
   SDL_IOStream *file = SDL_IOFromFile(path, "rb");
+  if (!file && preview_path(path, grid, edition, song, "rgb")) file = SDL_IOFromFile(path, "rb");
   if (!file) return NULL;
   uint8_t frame[PREVIEW_FRAME_BYTES];
   Sint64 size = SDL_GetIOSize(file);
-  // Read one frame from the middle of the cached clip without loading the video.
+  // Older caches stored the thumbnail in the middle of the raw clip.
   Sint64 middle = (size / PREVIEW_FRAME_BYTES / 2) * PREVIEW_FRAME_BYTES;
   bool read = size >= PREVIEW_FRAME_BYTES && size % PREVIEW_FRAME_BYTES == 0 &&
               SDL_SeekIO(file, middle, SDL_IO_SEEK_SET) == middle &&
@@ -173,7 +184,55 @@ SongGrid *song_grid_create(SDL_Renderer *renderer) {
   return grid;
 }
 
+static int SDLCALL decode_preview(void *context) {
+  PreviewDecode *decode = context;
+  char count[12], dimensions[16];
+  snprintf(count, sizeof count, "%d", PREVIEW_FRAMES);
+  snprintf(dimensions, sizeof dimensions, "%dx%d", PREVIEW_WIDTH, PREVIEW_HEIGHT);
+  const char *args[] = {"ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-filter_threads", "1",
+                        "-i", decode->path, "-an", "-frames:v", count, "-s", dimensions,
+                        "-pix_fmt", "rgb24", "-threads", "1", "-f", "rawvideo", "pipe:1", NULL};
+  uint8_t *frames = SDL_malloc(PREVIEW_BYTES);
+  SDL_PropertiesID props = SDL_CreateProperties();
+  SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, (void *)args);
+  SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_NULL);
+  SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_APP);
+  SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDERR_NUMBER, SDL_PROCESS_STDIO_NULL);
+  SDL_Process *process = frames && props ? SDL_CreateProcessWithProperties(props) : NULL;
+  SDL_DestroyProperties(props);
+  size_t bytes = 0;
+  int status = -1;
+  if (process) {
+    SDL_IOStream *output = SDL_GetProcessOutput(process);
+    while (output && bytes < PREVIEW_BYTES && !SDL_GetAtomicInt(&decode->cancel)) {
+      size_t count = SDL_ReadIO(output, frames + bytes, PREVIEW_BYTES - bytes);
+      if (count) bytes += count;
+      else if (SDL_GetIOStatus(output) == SDL_IO_STATUS_NOT_READY) SDL_Delay(1);
+      else break;
+    }
+    if (bytes == PREVIEW_BYTES) {
+      while (!SDL_GetAtomicInt(&decode->cancel) && !SDL_WaitProcess(process, false, &status)) SDL_Delay(1);
+    }
+    if (status == -1) {
+      SDL_KillProcess(process, true);
+      SDL_WaitProcess(process, true, NULL);
+    }
+    SDL_DestroyProcess(process);
+  }
+  if (!status && bytes == PREVIEW_BYTES) decode->frames = frames;
+  else SDL_free(frames);
+  SDL_SetAtomicInt(&decode->ready, 1);
+  return 0;
+}
+
 static void stop_preview(SongGrid *grid) {
+  if (grid->decode.thread) {
+    SDL_SetAtomicInt(&grid->decode.cancel, 1);
+    SDL_WaitThread(grid->decode.thread, NULL);
+    grid->decode.thread = NULL;
+    SDL_free(grid->decode.frames);
+    grid->decode.frames = NULL;
+  }
   SDL_DestroyAudioStream(grid->audio);
   SDL_DestroyTexture(grid->video);
   SDL_free(grid->audio_preview.pcm);
@@ -198,6 +257,15 @@ void song_grid_destroy(SongGrid *grid) {
   free(grid);
 }
 
+static void start_preview_texture(SongGrid *grid, size_t size) {
+  if (grid->frames && size >= PREVIEW_FRAME_BYTES && size % PREVIEW_FRAME_BYTES == 0) {
+    grid->frame_count = size / PREVIEW_FRAME_BYTES;
+    grid->last_frame = SIZE_MAX;
+    grid->video = SDL_CreateTexture(grid->renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING,
+                                    PREVIEW_WIDTH, PREVIEW_HEIGHT);
+  }
+}
+
 static void open_preview(SongGrid *grid, const Edition *edition, const Song *song, uint64_t now) {
   char path[PATH_MAX];
   int length = preview_path(path, grid, edition, song, "wav");
@@ -213,14 +281,17 @@ static void open_preview(SongGrid *grid, const Edition *edition, const Song *son
       SDL_ResumeAudioStreamDevice(grid->audio);
     }
   }
-  memcpy(path + length - 3, "rgb", 3);
-  size_t size;
-  grid->frames = SDL_LoadFile(path, &size);
-  if (grid->frames && size >= PREVIEW_FRAME_BYTES && size % PREVIEW_FRAME_BYTES == 0) {
-    grid->frame_count = size / PREVIEW_FRAME_BYTES;
-    grid->last_frame = SIZE_MAX;
-    grid->video = SDL_CreateTexture(grid->renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING,
-                                    PREVIEW_WIDTH, PREVIEW_HEIGHT);
+  memcpy(path + length - 3, "mkv", 3);
+  if (!access(path, R_OK)) {
+    SDL_strlcpy(grid->decode.path, path, sizeof grid->decode.path);
+    SDL_SetAtomicInt(&grid->decode.cancel, 0);
+    SDL_SetAtomicInt(&grid->decode.ready, 0);
+    grid->decode.thread = SDL_CreateThread(decode_preview, "coach-video", &grid->decode);
+  } else {
+    memcpy(path + length - 3, "rgb", 3);
+    size_t size = 0;
+    grid->frames = SDL_LoadFile(path, &size);
+    start_preview_texture(grid, size);
   }
 }
 
@@ -235,6 +306,13 @@ void song_grid_preview(SongGrid *grid, int edition, int selected) {
   }
   if (!song || !song->map || now < grid->preview_at) return;
   if (!grid->preview_started) open_preview(grid, page, song, now);
+  if (grid->decode.thread && SDL_GetAtomicInt(&grid->decode.ready)) {
+    SDL_WaitThread(grid->decode.thread, NULL);
+    grid->decode.thread = NULL;
+    grid->frames = grid->decode.frames;
+    grid->decode.frames = NULL;
+    start_preview_texture(grid, PREVIEW_BYTES);
+  }
   if (grid->audio && SDL_GetAudioStreamQueued(grid->audio) < grid->audio_preview.format.freq / 2)
     SDL_PutAudioStreamData(grid->audio, grid->audio_preview.pcm, (int)grid->audio_preview.bytes);
   if (grid->video) {

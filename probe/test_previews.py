@@ -1,8 +1,10 @@
+from pathlib import Path
 import struct
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from probe.previews import decode_preview
+from probe.previews import FRAME_BYTES, VIDEO_BYTES, compress_cached_previews, decode_preview
 
 
 class PreviewTest(unittest.TestCase):
@@ -23,3 +25,19 @@ class PreviewTest(unittest.TestCase):
             rate, _ = decode_preview(data, 3)
             self.assertEqual(rate, 32000)
             self.assertEqual(bytes(decode.call_args.args[0]), b"test")
+
+    def test_migrates_the_existing_preview_and_its_exact_middle_frame(self):
+        with TemporaryDirectory() as root:
+            cache = Path(root)
+            previews = cache / "previews" / "SJOE41"
+            previews.mkdir(parents=True)
+            frame = b"\x12\x7e\xc1" * (FRAME_BYTES // 3)
+            raw = b"\0" * (VIDEO_BYTES // 2) + frame + b"\0" * (VIDEO_BYTES // 2 - FRAME_BYTES)
+            original = previews / "song.rgb"
+            original.write_bytes(raw)
+
+            compress_cached_previews(cache, 1)
+
+            self.assertTrue((previews / "song.mkv").is_file())
+            self.assertEqual((previews / "song.thumb").read_bytes(), frame)
+            self.assertEqual(original.read_bytes(), raw)

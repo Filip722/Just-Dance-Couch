@@ -8,7 +8,7 @@ import subprocess
 
 from probe.collection import song_order
 from probe.dlc import u8_files
-from probe.previews import PREVIEW_SECONDS, fade_preview, read_entry, write_preview
+from probe.previews import PREVIEW_SECONDS, fade_preview, has_preview_video, read_entry, write_preview
 
 
 FAMILY_EDITIONS = {
@@ -111,8 +111,9 @@ def build_preview(song, destination):
 
 
 def prepare_previews(destination, catalog, jobs):
-    pending = [song for song in catalog if any(not (destination / f"{song[2]}.{ext}").is_file()
-                                              for ext in ("rgb", "wav"))]
+    pending = [song for song in catalog if not (
+        (destination / f"{song[2]}.wav").is_file() and has_preview_video(destination, song[2])
+    )]
     if pending:
         destination.mkdir(parents=True, exist_ok=True)
         with ProcessPoolExecutor(max_workers=min(6, jobs)) as pool:

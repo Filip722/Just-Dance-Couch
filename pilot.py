@@ -25,7 +25,7 @@ from probe.legacy_ubiart import CLASSIC_CATALOGS
 from probe.loudness import prepare_loudness
 from probe.lyn_coach_art import prepare_lyn_coach_art
 from probe.lyn_previews import entries as lyn_entries
-from probe.previews import archive_entries, prepare_previews
+from probe.previews import archive_entries, compress_cached_previews, prepare_previews
 
 
 ROOT = Path(__file__).resolve().parent
@@ -310,6 +310,7 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
     prepare_upstream()
     env = build_environment()
     prepare_probe_adapter()
+    compress_cached_previews(CACHE, jobs)
 
     collection, coaches = {}, {}
     lyn_editions = {"SJDE41": ("JD3.bf", jd3.SONGS), "SJHE41": ("JD3SP2.bf", gh.SONGS),

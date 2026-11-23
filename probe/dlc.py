@@ -13,7 +13,7 @@ from probe.collection import string_at
 from probe.dlc_lyn import LYN_DLC
 from probe.lyn_coach_art import prepare_lyn_coach_art
 from probe.lyn_previews import entries as lyn_entries, raw_stream, write_lyn_clip
-from probe.previews import ipk_entries, read_entry, render_preview, song_assets
+from probe.previews import has_preview_video, ipk_entries, read_entry, render_preview, song_assets
 
 
 WII_ADD_ON_TITLES = {
@@ -193,7 +193,7 @@ def ubiart_catalog(disc, pack, contents, discs, jobs, coaches):
             if base is None:
                 base = song_assets(discs / disc)
             audio = base.get(parent.lower().encode("ascii"), {}).get("audio")
-        if audio and not ((previews / f"{key}.wav").is_file() and (previews / f"{key}.rgb").is_file()):
+        if audio and not ((previews / f"{key}.wav").is_file() and has_preview_video(previews, key)):
             pending.append((key, audio, track, video))
         songs.append((*song, disc, pack.name, index))
     if pending:
@@ -238,7 +238,7 @@ def lyn_catalog(disc, pack, contents, jobs, coaches):
             entries = {name: entry for path, offset, _ in archives for name, entry in lyn_entries(path, offset)}
             counts = prepare_lyn_coach_art(entries, previews, {key: stem})
             coaches.update(((pack.name, name), count) for name, count in counts.items())
-        if not ((previews / f"{key}.wav").is_file() and (previews / f"{key}.rgb").is_file()):
+        if not ((previews / f"{key}.wav").is_file() and has_preview_video(previews, key)):
             pending.append((key, stem, contents[index]))
     if pending:
         with ProcessPoolExecutor(max_workers=min(6, jobs)) as workers:
