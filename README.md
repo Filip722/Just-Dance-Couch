@@ -6,7 +6,7 @@ Just Dance Couch is a native Linux launcher for your own Just Dance Wii backups.
 
 Use Linux on an x86-64-v3 CPU with a working Vulkan driver. Install Python 3.12 or newer, Clang (`clang` on your `PATH`), CMake, Ninja, `pkg-config`, FFmpeg, GNU binutils, the LZO2 runtime library, and `patch`. Install the development packages for GLFW, SDL3, Vulkan, shaderc, ALSA, Fontconfig, FreeType, and libusb-1.0. If SDL3 is installed in a custom location, export `SDL3_PREFIX` with its installation path before building.
 
-The launcher build requires the **12 USA Wii disc backups** listed below. Use **revision 1** for Just Dance 3 and **revision 0** for the other editions. The build checks each disc's region, revision, and executable. It downloads pinned dependencies as needed and stores the extracted discs, compiled code, and previews locally.
+The launcher build requires the **12 USA Wii disc backups** in the first block below. You can also build the three Kids games, both Disney Party games, and **Just Dance 2020** to include them in the picker. Use **revision 1** for Just Dance 3 and **revision 0** for the other discs. Just Dance 2020 uses the verified **European** revision. The build checks each disc's region, revision, and executable, downloads pinned dependencies as needed, and stores the extracted discs, compiled code, and previews locally.
 
 From the repository root, set `games_dir` and the filenames to match your backups. For optional Wii DLC, put your add-on WADs in the `DLC` subdirectory and install Python's `cryptography` package. An empty or absent DLC directory produces a disc-only picker.
 
@@ -30,6 +30,18 @@ SZ7E41|Just Dance 2017.rvz
 SE8E41|Just Dance 2018.rvz
 S5EE41|Just Dance 2019.rvz
 DISCS
+  while IFS='|' read -r disc image; do
+    if [ -f "$games_dir/$image" ]; then
+      python3 -B pilot.py build --disc "$disc" --image "$games_dir/$image"
+    fi
+  done <<'OPTIONAL_DISCS'
+SDZE41|Just Dance Kids.rvz
+SJZE41|Just Dance Kids 2.rvz
+SJ6E41|Just Dance Disney Party.rvz
+SJ7E41|Just Dance Kids 2014.rvz
+S5DE41|Just Dance Disney Party 2.rvz
+S2UP41|Just Dance 2020 (Europe) (En,Fr,De,Es,It,Nl).rvz
+OPTIONAL_DISCS
   python3 -B pilot.py couch --dlc-dir "$games_dir/DLC"
 )
 ```
@@ -57,11 +69,11 @@ Use `"$couch" --loopback` to check the picker and launch flow with a keyboard. R
 
 From the first song row, press **Up** to focus the edition name. Use **Left** and **Right** to switch editions, then **Down** to return to the songs. Hold a direction to keep moving.
 
-Press **A** on a multi-dancer song in **Just Dance 3**, **Just Dance Greatest Hits**, **Just Dance 4**, or **Just Dance 2014–2019** to open the coach picker. This also works with supported DLC in those editions. Each player uses **Left** or **Right** to choose, **A** to lock in, and **B** to unlock. Player 1 presses **+** to start, and the game assigns any unlocked players automatically. Press **+** from the grid for Quick Start. With the keyboard, **Enter**, **Backspace**, and **Space** act as **A**, **B**, and **+**. The original **Just Dance** has solo choreography. **Just Dance 2** and **Summer Party** assign duet roles by Wii Remote slot.
+Press **A** on a multi-dancer song in **Just Dance 3**, **Just Dance Greatest Hits**, **Just Dance 4**, or **Just Dance 2014–2020** to open the coach picker. This also works with supported DLC in those editions. Each player uses **Left** or **Right** to choose, **A** to lock in, and **B** to unlock. Player 1 presses **+** to start, and the game assigns any unlocked players automatically. Press **+** from the grid for Quick Start. With the keyboard, **Enter**, **Backspace**, and **Space** act as **A**, **B**, and **+**. The original **Just Dance** has solo choreography. **Just Dance 2** and **Summer Party** assign duet roles by Wii Remote slot. The Kids and Disney Party games use their default dancer assignments.
 
 ## Song library and DLC
 
-Each disc page shows that edition’s full supported Classic catalog. The **DLC** page follows **Just Dance 2019** when add-ons are available. The build imports USA Wii add-ons for **Just Dance 2–4**, **Just Dance 2014**, and **Just Dance 2015**.
+The library includes Classic routines from the main series and the on-disc song lists from Kids and Disney Party. The **DLC** page follows the latest installed edition when add-ons are available. The build imports USA Wii add-ons for **Just Dance 2–4**, **Just Dance 2014**, and **Just Dance 2015**.
 
 When a song appears in several DLC editions, the DLC page shows the newest available add-on copy. Within that edition, the standard DLC routine takes priority.
 

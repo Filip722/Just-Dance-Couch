@@ -2,6 +2,8 @@
 
 import re
 
+from probe.family_hooks import EARLY_SITES, HAN_SITES, family_hooks
+
 
 HOOKS = {
     "8004e3c8": "extern void jd2014_probe_system_splash(void); jd2014_probe_system_splash();",
@@ -51,6 +53,7 @@ UBIART_ADDRESSES = {
     "SZ7E41": "80551db4 804a7494 8057bfec 80447c24 804460a8 804fcf4c 804ad854 80566220 80456af8 80632c7c 8049ecac 8051b59c",
     "SE8E41": "80550d08 804a63d8 8057b620 80448444 804468c8 804fbdb8 804ac7cc 805651cc 804572e4 80630cdc 8049dfdc 8051a364",
     "S5EE41": "805414d8 8049b300 8056ba78 8043e2a8 8043c9c8 804ed394 804a16f4 805557b8 8044cbc0 806143a4 80492f0c 8050a23c",
+    "S2UP41": "8054161c 8049b454 8056bef4 8043e2d4 8043c9f4 804ed53c 804a1848 80555a60 8044cc18 80614820 80493060 8050a3b8",
 }
 UBIART_HOOK_KEYS = "8023af10 80189828 80261ce0 80125af0 80124238 801e2fe0 80194f48 8022fdec 801346fc 8007b294 80183ce0 801fb314"
 
@@ -61,6 +64,7 @@ UBIART_DISPLAY_HOWTO = {
     "SZ7E41": "80548844",
     "SE8E41": "80547760",
     "S5EE41": "80537268",
+    "S2UP41": "80537404",
 }
 
 
@@ -167,6 +171,9 @@ def instrument(directory, disc="SJOE41"):
                            (JD2015_HOOKS[key] for key in UBIART_HOOK_KEYS.split()), strict=True))
     else:
         pending = {"SDNE41": JD1_HOOKS, "SE3E41": JD2015_HOOKS}.get(disc, HOOKS).copy()
+    sites = list(sites.items())
+    if disc in HAN_SITES or disc in EARLY_SITES:
+        pending, sites = family_hooks(disc)
     if howto := UBIART_DISPLAY_HOWTO.get(disc):
         pending[howto] = (
             "extern int jd2015_probe_skip_lobby_howto(void); "
@@ -184,7 +191,8 @@ def instrument(directory, disc="SJOE41"):
                 if not modified.startswith(line, after):
                     modified = modified[:after] + line + modified[after:]
                 del pending[address]
-        for address, (before, after) in tuple(sites.items()):
+        for site in sites[:]:
+            address, (before, after) = site
             marker = f"void f_{address}(void)"
             if (start := modified.find(marker)) < 0:
                 continue
@@ -194,13 +202,14 @@ def instrument(directory, disc="SJOE41"):
                 if body.count(before) != 1:
                     raise ValueError(f"Unexpected {disc} probe hook at {address}")
                 modified = modified[:start] + body.replace(before, after) + modified[end:]
-            del sites[address]
+            sites.remove(site)
         if modified != original:
             source.write_text(modified)
         if not pending and not sites:
             break
     if pending or sites:
-        raise ValueError(f"Missing {disc} probe hook addresses {', '.join(pending | sites)}")
+        missing = {*pending, *(address for address, _ in sites)}
+        raise ValueError(f"Missing {disc} probe hook addresses {', '.join(sorted(missing))}")
     if disc in LYN_STREAM_SITES:
         fix_lyn_stream_wait(directory, disc)
 

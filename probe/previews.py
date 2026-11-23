@@ -78,7 +78,11 @@ def preview_cue(key, track):
 def decode_preview(data, start):
     if data[:4] != b"RAKI" or data[4:8] not in (b"\0\0\0\x08", b"\0\0\0\x09") or data[8:16] != b"Wii adpc":
         raise ValueError("Expected a Wii RAKI ADPCM track")
-    chunks = {kind: (offset, size) for kind, offset, size in struct.iter_unpack(">4sII", data[32:80])}
+    count, = struct.unpack_from(">I", data, 24)
+    end = 32 + 12 * count
+    if end > len(data):
+        raise ValueError("Truncated Wii RAKI chunk table")
+    chunks = {kind: (offset, size) for kind, offset, size in struct.iter_unpack(">4sII", data[32:end])}
     format_offset, _ = chunks[b"fmt "]
     _, channels, rate = struct.unpack_from(">HHI", data, format_offset)
     stream, size = chunks[b"datS"]
@@ -141,8 +145,10 @@ def write_preview(key, destination, cue, rate, samples, video, *, seek_before_in
                 output.setparams((2, 2, rate, 0, "NONE", "not compressed"))
                 output.writeframes(samples)
         if video:
-            source, rgb = staging / "coach", staging / "preview.rgb"
-            source.write_bytes(video)
+            rgb = staging / "preview.rgb"
+            source = video if isinstance(video, Path) else staging / "coach"
+            if not isinstance(video, Path):
+                source.write_bytes(video)
             seek = ["-ss", str(cue)]
             args = [
                 "ffmpeg", "-v", "error", "-nostdin", "-threads", "1",

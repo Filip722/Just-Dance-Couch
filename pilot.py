@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 from urllib.request import urlretrieve
 
-from probe import dlc, gh, jd1, jd2, jd3, jd4
+from probe import dlc, family, gh, jd1, jd2, jd3, jd4
 from probe.coach_art import prepare_coach_art
 from probe.collection import EDITIONS, catalog, write_catalog
 from probe.dlc_lyn import JD2_DLC_SLOT_OFFSETS, JD3_DLC_SLOTS, JD4_DLC_CHOREOGRAPHY, LYN_DLC
@@ -41,6 +41,8 @@ DISCS = {
     "SZ7E41": ("Just Dance 2017.rvz", 0, "fa7e5cda4da2a1ddafcc71f32bfaa1a4acca311dcafde939b247b49bb9896d16"),
     "SE8E41": ("Just Dance 2018.rvz", 0, "fefc8746c08f91f3e19a7fefca4e482b69e11bd88f06b1bdacfa7a209ee5d312"),
     "S5EE41": ("Just Dance 2019.rvz", 0, "0c30ff85d33c38fa933bdd3ff1af7de01d97b43ded7a36610cadb2c8e009ec84"),
+    "S2UP41": ("Just Dance 2020 (Europe) (En,Fr,De,Es,It,Nl).rvz", 0,
+               "17a6b56790c79d5a49b6fc28569247fef35becca75cbd8df00867248119e874d"),
     "SJDE41": ("Just Dance 3.rvz", 1, "18c218dd67a4c1d8f05ad40a380bc1822c3ab4a4ff7d04a24d043f933997acf7"),
     "SJXE41": ("Just Dance 4.rvz", 0, "2b55c4e869e15d89f705fcc76912ea800f73167fbe49437c0e9e1f9756ffc0da"),
     "S5DE41": ("Just Dance Disney Party 2.rvz", 0, "6ec3d07053bd2951e4f77dd27e46de366e45b3c9d5204b4dd7eba347fc3de162"),
@@ -55,11 +57,13 @@ DISCS = {
 # Keep this in Wii release order for the picker and cross-edition song selection.
 EMBEDDED_TITLES = {
     "SDNE41": "jd1_title",
-    "SD2Y41": "jd2_title", "SJ9E41": "summer_title",
-    "SJDE41": "jd3_title", "SJHE41": "gh_title", "SJXE41": "jd4_title",
-    "SJOE41": "jd2014_title", "SE3E41": "jd2015_title",
-    **{disc: f"title_{disc}" for disc in EDITIONS},
+    "SD2Y41": "jd2_title", "SDZE41": "title_SDZE41", "SJ9E41": "summer_title",
+    "SJDE41": "jd3_title", "SJZE41": "title_SJZE41", "SJHE41": "gh_title", "SJXE41": "jd4_title",
+    "SJ6E41": "title_SJ6E41", "SJOE41": "jd2014_title", "SJ7E41": "title_SJ7E41",
+    "SE3E41": "jd2015_title", "SJNE41": "title_SJNE41", "S5DE41": "title_S5DE41",
+    **{disc: f"title_{disc}" for disc in EDITIONS if disc != "SJNE41"},
 }
+OPTIONAL_TITLES = {*family.FAMILY_EDITIONS, "S2UP41"}
 BACKUPS = Path("/mnt/synology/Games/wii")
 
 
@@ -89,9 +93,10 @@ def verify_disc(disc, disc_id):
     with (disc / "disc/region.bin").open("rb") as region:
         region_code = region.read(4)
     expected_id = disc_id.encode("ascii")
+    region_name, expected_region = ("Europe", 2) if disc_id == "S2UP41" else ("USA", 1)
     if (header != expected_id + bytes((0, revision)) or partition_id != expected_id
-            or region_code != b"\x00\x00\x00\x01"):
-        raise ValueError(f"{disc} must be {disc_id} revision {revision}, USA")
+            or region_code != expected_region.to_bytes(4, "big")):
+        raise ValueError(f"{disc} must be {disc_id} revision {revision}, {region_name}")
     if checksum(disc / "sys/main.dol") != dol_checksum:
         raise ValueError(f"{disc} has a different boot executable")
 
@@ -211,7 +216,8 @@ def prepare_probe_adapter():
                                for (_, key, *_), asset in zip(LYN_DLC["SJXE41"], JD4_DLC_CHOREOGRAPHY, strict=True))
     selection = selection.replace("JD2_DLC_SLOTS", jd2_downloads)
     selection = selection.replace("JD3_DLC_SLOTS", jd3_downloads).replace("JD4_DLC_SLOTS", jd4_downloads)
-    content = (folder / "jd2014.c").read_text() + "\n" + selection + "\n" + (folder / "lyn_classic.inc").read_text()
+    content = "\n".join(((folder / "jd2014.c").read_text(), selection,
+                         (folder / "lyn_classic.inc").read_text(), (folder / "family.inc").read_text()))
     if not adapter.exists() or adapter.read_text() != content:
         adapter.write_text(content)
 
@@ -297,15 +303,18 @@ def link_command(folder, target, env):
 def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
     prepare_upstream()
     env = build_environment()
-    for disc_id in EMBEDDED_TITLES:
-        if not (RUNTIME / f"build-{disc_id}/title.so").is_file():
+    titles = {}
+    for disc_id, symbol in EMBEDDED_TITLES.items():
+        if (RUNTIME / f"build-{disc_id}/title.so").is_file():
+            titles[disc_id] = symbol
+        elif disc_id not in OPTIONAL_TITLES:
             raise ValueError(f"Run python3 pilot.py build --disc {disc_id} first")
     prepare_probe_adapter()
 
     collection, coaches = {}, {}
     lyn_editions = {"SJDE41": ("JD3.bf", jd3.SONGS), "SJHE41": ("JD3SP2.bf", gh.SONGS),
                     "SJXE41": ("JD4.bf", jd4.SONGS)}
-    for disc_id in EMBEDDED_TITLES:
+    for disc_id in titles:
         disc = CACHE / "discs" / disc_id
         verify_disc(disc, disc_id)
         title_build = RUNTIME / f"build-{disc_id}"
@@ -324,6 +333,11 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
         elif disc_id == "SJHE41":
             collection[disc_id] = "Just Dance Greatest Hits", gh.catalog()
             gh.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
+            instrument(title_build / "generated", disc_id)
+        elif disc_id in family.FAMILY_EDITIONS:
+            songs = family.songs(disc)
+            collection[disc_id] = family.FAMILY_EDITIONS[disc_id], [song[:3] for song in songs]
+            family.prepare_previews(CACHE / "previews" / disc_id, songs, jobs)
             instrument(title_build / "generated", disc_id)
         elif disc_id in jd2.EDITIONS:
             collection[disc_id] = jd2.catalog(disc_id)
@@ -369,14 +383,14 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
         staging = Path(temp)
         write_catalog(staging, collection, dlc_songs, levels, coaches)
         registry = staging / "collection_titles.c"
-        declarations = "\n".join(f"extern const Title {symbol};" for symbol in EMBEDDED_TITLES.values())
+        declarations = "\n".join(f"extern const Title {symbol};" for symbol in titles.values())
         lookups = "\n".join(f'  if (!strcmp(path, "builtin:{disc}")) return &{symbol};'
-                             for disc, symbol in EMBEDDED_TITLES.items())
+                             for disc, symbol in titles.items())
         registry.write_text('#include <string.h>\n#include "title.h"\n' + declarations
                             + "\nconst Title *jd_builtin_title(const char *path) {\n"
                             + lookups + "\n  return NULL;\n}\n")
         title_objects = []
-        for disc_id, symbol in EMBEDDED_TITLES.items():
+        for disc_id, symbol in titles.items():
             folder = RUNTIME / f"build-{disc_id}"
             _, original, _ = link_command(folder, "title.so", env)
             combined = staging / f"{disc_id}.o"

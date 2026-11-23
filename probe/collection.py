@@ -13,6 +13,7 @@ EDITIONS = {
     "SZ7E41": "Just Dance 2017",
     "SE8E41": "Just Dance 2018",
     "S5EE41": "Just Dance 2019",
+    "S2UP41": "Just Dance 2020",
 }
 
 

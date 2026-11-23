@@ -335,12 +335,14 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   if (add_on && (snprintf(nand, sizeof nand, "%s/dlc/%s/mounts/%u", cache,
                           add_on->pack, add_on->content_index) >= (int)sizeof nand ||
                  access(nand, R_OK | X_OK))) return 10;
-  uint8_t header[8] = {0}, usa[] = {0, 0, 0, 1};
+  int european = !strcmp(disc, "S2UP41");
+  uint8_t header[8] = {0}, region[] = {0, 0, 0, european ? 2 : 1};
   memcpy(header, disc, 6);
   header[7] = !strcmp(disc, "SJDE41");
   if (!check_header(cache, disc, "disc/header.bin", header, sizeof header) ||
-      !check_header(cache, disc, "disc/region.bin", usa, sizeof usa)) {
-    fprintf(stderr, "couch: expected the matching USA revision of %s in %s\n", disc, cache);
+      !check_header(cache, disc, "disc/region.bin", region, sizeof region)) {
+    fprintf(stderr, "couch: expected the matching %s revision of %s in %s\n",
+            european ? "European" : "USA", disc, cache);
     return 10;
   }
   if (!directory_tree(saves) || chdir(state) != 0) {
