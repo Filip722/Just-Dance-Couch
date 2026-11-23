@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import wave
+import zlib
 
 
 # The two initial songs already had verified preview cues.
@@ -18,13 +19,13 @@ PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_FPS = 160, 120, 10
 FRAME_BYTES = PREVIEW_WIDTH * PREVIEW_HEIGHT * 3
 
 
-def archive_entries(folder):
+def archive_entries(folder, *, compressed=False):
     for archive in sorted(folder.glob("*.ipk")):
         if archive.name.lower().startswith("bundle"):
-            yield from ipk_entries((archive, 0, archive.stat().st_size))
+            yield from ipk_entries((archive, 0, archive.stat().st_size), compressed=compressed)
 
 
-def ipk_entries(entry):
+def ipk_entries(entry, *, compressed=False):
     archive, start, limit = entry
     with archive.open("rb") as source:
         source.seek(start)
@@ -41,15 +42,25 @@ def ipk_entries(entry):
             if source.tell() > start + base:
                 raise ValueError(f"Invalid Wii archive table in {archive}")
             directory, name = (first, second) if first.endswith(b"/") else (second, first)
-            if not packed and base + offset + size <= limit and size:
-                yield directory.lower(), name.lower(), (archive, start + base + offset, size)
+            length = packed or size
+            if (compressed or not packed) and base + offset + length <= limit and size:
+                location = (archive, start + base + offset, length)
+                yield directory.lower(), name.lower(), (*location, size) if packed else location
 
 
 def read_entry(entry):
-    archive, offset, length = entry
+    archive, offset, length, *expanded = entry
     with archive.open("rb") as source:
         source.seek(offset)
-        return source.read(length)
+        data = source.read(length)
+    if expanded:
+        try:
+            data = zlib.decompress(data)
+        except zlib.error as error:
+            raise ValueError(f"Invalid compressed Wii archive entry in {archive}") from error
+        if len(data) != expanded[0]:
+            raise ValueError(f"Unexpected Wii archive entry size in {archive}")
+    return data
 
 
 def preview_cue(key, track):

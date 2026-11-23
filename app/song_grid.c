@@ -45,6 +45,8 @@ struct SongGrid {
   uint8_t *frames;
   size_t frame_count, last_frame;
   const Song *preview;
+  const Song *portrait_song;
+  SDL_Texture *portraits[REMOTE_PLAYERS];
   uint64_t preview_at, preview_started;
   char cache[PATH_MAX];
   SDL_Texture **covers[];
@@ -185,6 +187,7 @@ static void stop_preview(SongGrid *grid) {
 }
 
 void song_grid_destroy(SongGrid *grid) {
+  for (unsigned i = 0; i < REMOTE_PLAYERS; i++) SDL_DestroyTexture(grid->portraits[i]);
   stop_preview(grid);
   for (int edition = 0; edition < edition_count; edition++) {
     if (!grid->covers[edition]) continue;
@@ -307,8 +310,80 @@ static void background(SDL_Renderer *renderer) {
     SDL_RenderLine(renderer, 1070 + i * 45, 0, 1440, 255 + i * 42);
 }
 
+static void load_portraits(SongGrid *grid, const Edition *page, const Song *song) {
+  if (grid->portrait_song == song) return;
+  grid->portrait_song = song;
+  for (unsigned i = 0; i < REMOTE_PLAYERS; i++) {
+    SDL_DestroyTexture(grid->portraits[i]);
+    grid->portraits[i] = NULL;
+    if (i >= song->coach_count) continue;
+    char path[PATH_MAX], extension[20];
+    snprintf(extension, sizeof extension, "coach-%u.bmp", i + 1);
+    if (!preview_path(path, grid, page, song, extension)) continue;
+    SDL_Surface *portrait = SDL_LoadBMP(path);
+    if (!portrait) continue;
+    grid->portraits[i] = SDL_CreateTextureFromSurface(grid->renderer, portrait);
+    SDL_DestroySurface(portrait);
+  }
+}
+
+static void paint_coaches(SongGrid *grid, const Song *song, const CoachPicker *picker,
+                          const char *status, int keyboard) {
+  static const SDL_Color colors[REMOTE_PLAYERS] = {
+    {120, 210, 255, 255}, {255, 162, 191, 255}, {206, 255, 119, 255}, {255, 198, 101, 255},
+  };
+  SDL_Renderer *renderer = grid->renderer;
+  rectangle(renderer, (SDL_FRect){0, 0, WIDTH, HEIGHT}, (SDL_Color){11, 7, 21, 220});
+  SDL_FRect panel = {146, 110, 1148, 590};
+  rectangle(renderer, panel, (SDL_Color){33, 23, 53, 255});
+  text(grid, HEADING, "Choose your dancer", panel.x + 42, panel.y + 58, white);
+  text_fit(grid, TILE, song->title, panel.x + 42, panel.y + 94, panel.w - 84, muted);
+
+  const float width = 226, gap = 18;
+  float start = (WIDTH - song->coach_count * width - (song->coach_count - 1) * gap) / 2;
+  for (unsigned coach = 0; coach < song->coach_count; coach++) {
+    SDL_FRect card = {start + coach * (width + gap), panel.y + 118, width, 342};
+    rectangle(renderer, card, (SDL_Color){52, 38, 78, 255});
+    if (grid->portraits[coach]) {
+      float w, h;
+      SDL_GetTextureSize(grid->portraits[coach], &w, &h);
+      float scale = SDL_min((card.w - 18) / w, 238 / h);
+      SDL_FRect art = {card.x + (card.w - w * scale) / 2, card.y + 18 + (238 - h * scale) / 2,
+                       w * scale, h * scale};
+      SDL_RenderTexture(renderer, grid->portraits[coach], NULL, &art);
+    }
+    char label[24];
+    snprintf(label, sizeof label, "Coach %u", coach + 1);
+    text(grid, TILE, label, card.x + 16, card.y + 273, white);
+    float badge_x = card.x + 14;
+    for (unsigned player = 0; player < REMOTE_PLAYERS; player++) {
+      unsigned bit = 1u << player;
+      if (!(picker->present & bit) || picker->cursor[player] != coach) continue;
+      SDL_FRect badge = {badge_x, card.y + 290, 44, 32};
+      int locked = (picker->locked & bit) != 0;
+      if (locked) rectangle(renderer, badge, colors[player]);
+      else {
+        SDL_SetRenderDrawColor(renderer, colors[player].r, colors[player].g, colors[player].b, 255);
+        SDL_RenderRect(renderer, &badge);
+      }
+      snprintf(label, sizeof label, "P%u", player + 1);
+      text(grid, DETAIL, label, badge.x + 9, badge.y + 22, locked ? (SDL_Color){24, 15, 39, 255} : colors[player]);
+      badge_x += 51;
+    }
+  }
+  if (status) text_fit(grid, DETAIL, status, panel.x + 42, panel.y + 503, panel.w - 84, accent[1]);
+  rectangle(renderer, (SDL_FRect){panel.x + 42, panel.y + 525, panel.w - 84, 1},
+            (SDL_Color){111, 90, 140, 255});
+  text(grid, DETAIL, keyboard ? "Left/Right  Browse    Enter  Lock in    Backspace  Unlock"
+                             : "Left/Right  Browse    A  Lock in    B  Unlock",
+       panel.x + 42, panel.y + 561, muted);
+  text(grid, TILE, keyboard ? "Space  Start" : "P1 +  Start", panel.x + panel.w - 342, panel.y + 561, accent[0]);
+  text(grid, DETAIL, keyboard ? "Esc  Back" : "HOME  Back", panel.x + panel.w - 170, panel.y + 561, muted);
+}
+
 void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
-                     bool edition_focused, int loading, const char *status, int keyboard) {
+                     bool edition_focused, int loading, const char *status, int keyboard,
+                     const CoachPicker *coaches) {
   SDL_Renderer *renderer = grid->renderer;
   const Edition *page = &editions[edition];
   const Song *choice = &page->songs[selected];
@@ -335,6 +410,9 @@ void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
   } else {
     if (status) text_fit(grid, DETAIL, status, HEADER_STATUS_X, HEADER_BASELINE,
                          HEADER_HINT_X - HEADER_STATUS_X - 20, muted);
+    else if (!coaches && !edition_focused && choice->coach_count > 1)
+      text(grid, DETAIL, keyboard ? "Enter  Choose dancer    Space  Quick Start" : "A  Choose dancer    +  Quick Start",
+           HEADER_STATUS_X, HEADER_BASELINE, muted);
     if (edition_focused) text(grid, DETAIL, "Down  Songs", HEADER_HINT_X, HEADER_BASELINE, muted);
     else if (selected < GRID_COLUMNS)
       text(grid, DETAIL, "Up  Editions", HEADER_HINT_X, HEADER_BASELINE, muted);
@@ -377,6 +455,10 @@ void song_grid_paint(SongGrid *grid, int edition, int selected, int first_row,
     float row_height = track.h / total_rows;
     rectangle(renderer, track, (SDL_Color){210, 156, 243, 56});
     rectangle(renderer, (SDL_FRect){track.x, track.y + row_height * first_row, track.w, row_height * GRID_ROWS}, highlight);
+  }
+  if (coaches) {
+    load_portraits(grid, page, choice);
+    paint_coaches(grid, choice, coaches, status, keyboard);
   }
   SDL_RenderPresent(renderer);
 }

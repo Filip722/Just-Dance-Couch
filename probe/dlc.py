@@ -11,6 +11,7 @@ import tempfile
 from probe.collection import string_at
 from probe.dlc_lyn import LYN_DLC
 from probe.lyn_previews import entries as lyn_entries, raw_stream, write_lyn_clip
+from probe.coach_art import prepare_coach_art
 from probe.previews import ipk_entries, read_entry, render_preview, song_assets
 
 
@@ -166,7 +167,7 @@ def ubiart_song(disc, bundle):
     return (title, artist, key), parent, files
 
 
-def ubiart_catalog(disc, pack, contents, discs, jobs):
+def ubiart_catalog(disc, pack, contents, discs, jobs, coaches):
     previews = pack / "previews"
     previews.mkdir(exist_ok=True)
     songs, pending, base = [], [], None
@@ -180,6 +181,9 @@ def ubiart_catalog(disc, pack, contents, discs, jobs):
         key = song[2].lower()
         if not key.isascii() or not key.replace("_", "").isalnum():
             raise ValueError(f"Invalid Wii DLC map key {key!r}")
+        if disc == "SJOE41" and coaches is not None:
+            counts = prepare_coach_art(ipk_entries(bundle, compressed=True), previews, (key,))
+            coaches.update(((pack.name, name), count) for name, count in counts.items())
         stem = key.encode("ascii")
         audio = files.get(stem + b".wav.ckd")
         track = files[stem + b"_musictrack.tpl.ckd"]
@@ -235,7 +239,7 @@ def lyn_catalog(disc, pack, contents, jobs):
     return songs
 
 
-def prepare_dlc(folder, cache, discs, jobs):
+def prepare_dlc(folder, cache, discs, jobs, coaches=None):
     wads = sorted(path for path in folder.glob("*") if path.suffix.lower() == ".wad")
     if not wads:
         return []
@@ -250,7 +254,7 @@ def prepare_dlc(folder, cache, discs, jobs):
         if disc in LYN_DLC:
             edition = lyn_catalog(*pack, jobs)
         else:
-            edition = ubiart_catalog(*pack, discs, jobs)
+            edition = ubiart_catalog(*pack, discs, jobs, coaches)
         for song in edition:
             _, _, key, _, _, index = song
             if (disc, key) not in songs:

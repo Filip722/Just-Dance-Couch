@@ -56,6 +56,9 @@ static atomic_uint_fast64_t join_until;
 enum { GAME_WINDOW_NORMAL, GAME_WINDOW_HIDDEN, GAME_WINDOW_READY, GAME_WINDOW_SHOWN };
 static atomic_int game_window;
 static atomic_int requested_song, boot_parked;
+enum { AUTO_COACHES, WAITING_FOR_COACHES, COACHES_CONFIRMED };
+static atomic_int coach_state = AUTO_COACHES;
+static uint8_t confirmed_coaches[REMOTE_PLAYERS];
 static pthread_mutex_t selection_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t selection_ready = PTHREAD_COND_INITIALIZER;
 static int bridge_closed;
@@ -72,6 +75,13 @@ static const Song *selected_song(void) {
 const char *jd_couch_requested_map(void) {
   const Song *song = selected_song();
   return song ? song->map : NULL;
+}
+
+int jd_couch_coach_choices(uint8_t choices[REMOTE_PLAYERS]) {
+  int state = atomic_load(&coach_state);
+  if (state == WAITING_FOR_COACHES) return 0;
+  if (state == COACHES_CONFIRMED) memcpy(choices, confirmed_coaches, sizeof confirmed_coaches);
+  return 1;
 }
 
 #define LEVEL_PEAK 27570.0f  // -1.5 dBFS at the native sample rate.
@@ -220,11 +230,23 @@ static void *read_remote(void *unused) {
     BridgeRemote *remote = &bridge_remotes[message.player];
     switch (message.type) {
       case SELECT_SONG:
-        if (message.size == 1 && !add_on && edition && message.data[0] < edition->count) {
+      case PREPARE_SONG:
+        if (message.size == 1 && !add_on && edition && message.data[0] < edition->count &&
+            !atomic_load(&requested_song)) {
           pthread_mutex_lock(&selection_lock);
+          if (message.type == PREPARE_SONG && edition->songs[message.data[0]].coach_count > 1)
+            atomic_store(&coach_state, WAITING_FOR_COACHES);
           atomic_store(&requested_song, message.data[0] + 1);
           pthread_cond_signal(&selection_ready);
           pthread_mutex_unlock(&selection_lock);
+        }
+        break;
+      case START_DANCE:
+        if (message.size == sizeof confirmed_coaches && atomic_load(&coach_state) == WAITING_FOR_COACHES) {
+          const Song *song = selected_song();
+          for (unsigned player = 0; player < REMOTE_PLAYERS; player++)
+            if (message.data[player] <= song->coach_count) confirmed_coaches[player] = message.data[player];
+          atomic_store(&coach_state, COACHES_CONFIRMED);
         }
         break;
       case REMOTE_CONNECTED:
@@ -288,7 +310,8 @@ static int check_header(const char *root, const char *disc, const char *relative
   return matches;
 }
 
-int run_worker(char *program, const char *disc, const char *map, int socket, int simulated) {
+int run_worker(char *program, const char *disc, const char *map, int socket, int simulated,
+               int choose_coaches) {
   char cache[PATH_MAX], state[PATH_MAX], sys[PATH_MAX], saves[PATH_MAX], nand[PATH_MAX], builtin[24];
   if (!strcmp(disc, "DLC")) {
     const Edition *page = &editions[edition_count - 1];
@@ -296,6 +319,7 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
     long row = map ? strtol(map, &end, 10) : -1;
     if (page->disc || !map || !*map || *end || row < 0 || row >= page->count) return 10;
     add_on = &page->songs[row];
+    if (choose_coaches && add_on->coach_count > 1) atomic_store(&coach_state, WAITING_FOR_COACHES);
     disc = add_on->disc;
     map = add_on->map;
   }

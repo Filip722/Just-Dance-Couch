@@ -15,6 +15,7 @@ import tempfile
 from urllib.request import urlretrieve
 
 from probe import dlc, gh, jd1, jd2, jd3, jd4
+from probe.coach_art import prepare_coach_art
 from probe.collection import EDITIONS, catalog, write_catalog
 from probe.dlc_lyn import JD2_DLC_SLOT_OFFSETS, JD3_DLC_SLOTS, JD4_DLC_CHOREOGRAPHY, LYN_DLC
 from probe.instrument import (
@@ -22,7 +23,7 @@ from probe.instrument import (
 )
 from probe.legacy_ubiart import CLASSIC_CATALOGS
 from probe.loudness import prepare_loudness
-from probe.previews import prepare_previews
+from probe.previews import archive_entries, prepare_previews
 
 
 ROOT = Path(__file__).resolve().parent
@@ -299,7 +300,7 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
             raise ValueError(f"Run python3 pilot.py build --disc {disc_id} first")
     prepare_probe_adapter()
 
-    collection = {}
+    collection, coaches = {}, {}
     for disc_id in EMBEDDED_TITLES:
         disc = CACHE / "discs" / disc_id
         verify_disc(disc, disc_id)
@@ -334,11 +335,16 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
             else:
                 collection[disc_id] = CLASSIC_CATALOGS[disc_id]
                 keys = None
-            prepare_previews(disc, CACHE / "previews" / disc_id, jobs, keys)
+            previews = CACHE / "previews" / disc_id
+            prepare_previews(disc, previews, jobs, keys)
+            if disc_id == "SJOE41":
+                counts = prepare_coach_art(archive_entries(disc / "files", compressed=True), previews,
+                                           (song[2] for song in collection[disc_id][1]))
+                coaches.update(((disc_id, name), count) for name, count in counts.items())
             instrument(title_build / "generated", disc_id)
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
 
-    dlc_songs = dlc.prepare_dlc(dlc_directory, CACHE / "dlc", CACHE / "discs", jobs)
+    dlc_songs = dlc.prepare_dlc(dlc_directory, CACHE / "dlc", CACHE / "discs", jobs, coaches)
     levels = prepare_loudness(CACHE, collection, dlc_songs, jobs)
     console = RUNTIME / "build"
     subprocess.run(["ninja", "-j", str(jobs), "wii-recomp"], cwd=console, env=env, check=True)
@@ -352,7 +358,7 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
     output_folder.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=CACHE) as temp:
         staging = Path(temp)
-        write_catalog(staging, collection, dlc_songs, levels)
+        write_catalog(staging, collection, dlc_songs, levels, coaches)
         registry = staging / "collection_titles.c"
         declarations = "\n".join(f"extern const Title {symbol};" for symbol in EMBEDDED_TITLES.values())
         lookups = "\n".join(f'  if (!strcmp(path, "builtin:{disc}")) return &{symbol};'

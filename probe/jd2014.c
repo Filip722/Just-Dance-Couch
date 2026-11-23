@@ -5,6 +5,7 @@
 
 #include "cpu.h"
 #include "input.h"
+#include "remote_link.h"
 #include "title.h"
 
 enum {
@@ -18,12 +19,17 @@ enum {
   SONG_VERSION_DISC = 1,
   SONG_VERSION_DLC = 2,
   MODULE_GAMEPLAY_CLASSIC = 8,
+  DEVICE_WII_REMOTE = 0,
   SJOE41_TITLE_LOW = 0x534a4f45,
   SPLASH_INITIALIZED = 0, SPLASH_DISPLAYING = 4, SPLASH_PAUSED = 8,
 };
 
 static const uint32_t DIRECT_LAUNCH_CALLER = 0x801d3c40u;
 static const uint32_t MANAGER_CONNECTED_PLAYERS = 0x801c4b64u;
+static const uint32_t MANAGER_PLAYER_ID = 0x801c4cbcu;
+static const uint32_t MANAGER_PLAYER_COACH = 0x801c4bc8u;
+static const uint32_t MANAGER_COACH_COUNT = 0x801ca020u;
+static const uint32_t MANAGER_ASSIGN_COACH = 0x801ca1f0u;
 static const uint32_t LOBBY_PREPARE_LAUNCH = 0x800f3c18u;
 static const uint32_t DATABASE_IS_READY = 0x801e3854u;
 static const uint32_t DATABASE_GET_SONG = 0x801e4aa0u;
@@ -33,6 +39,7 @@ static const uint32_t SONG_GET_DESCRIPTOR = 0x800a2338u;
 static const uint32_t SPLASH_END_DISPLAYING = 0x8004e334u;
 
 extern const char *jd_couch_requested_map(void) __attribute__((weak));
+extern int jd_couch_coach_choices(uint8_t choices[PLAYERS]) __attribute__((weak));
 extern const char *jd_couch_wait_for_map(void) __attribute__((weak));
 extern unsigned jd_couch_dlc_index(void) __attribute__((weak));
 extern void time_boot_controller_menu(void);
@@ -197,6 +204,50 @@ void jd2014_probe_lobby_ready(void) {
   }
 }
 
+static int apply_coach_choices(uint32_t manager) {
+  uint8_t choices[PLAYERS] = {0};
+  if (jd_couch_coach_choices && !jd_couch_coach_choices(choices)) return 0;
+  Cpu saved = cpu;
+  uint32_t ids[PLAYERS];
+  for (unsigned slot = 0; slot < PLAYERS; slot++) {
+    ids[slot] = UINT32_MAX;
+    if (!choices[slot] || !link_linked(slot)) continue;
+    // JD_GameManager::getPlayerId takes the Wii device type and its 64-bit port ID.
+    cpu.r[3] = manager;
+    cpu.r[4] = DEVICE_WII_REMOTE;
+    cpu.r[5] = 0;
+    cpu.r[6] = slot;
+    dispatch(MANAGER_PLAYER_ID);
+    ids[slot] = cpu.r[3];
+    cpu = saved;
+    if (ids[slot] == UINT32_MAX) return 0;
+  }
+  for (unsigned slot = 0; slot < PLAYERS; slot++) {
+    if (ids[slot] == UINT32_MAX || choices[slot] > guest_call(MANAGER_COACH_COUNT, manager)) continue;
+    uint32_t coach = choices[slot] - 1;
+    cpu.r[3] = manager;
+    cpu.r[4] = ids[slot];
+    dispatch(MANAGER_PLAYER_COACH);
+    // The original selection action toggles a coach off when selected twice.
+    if (cpu.r[3] != coach) {
+      cpu.r[3] = manager;
+      cpu.r[4] = ids[slot];
+      cpu.r[5] = coach;
+      dispatch(MANAGER_ASSIGN_COACH);
+      cpu.r[3] = manager;
+      cpu.r[4] = ids[slot];
+      dispatch(MANAGER_PLAYER_COACH);
+    }
+    int assigned = cpu.r[3] == coach;
+    cpu = saved;
+    if (assigned)
+      fprintf(stderr, "probe: Player %u chose coach %u (native player %u)\n", slot + 1, choices[slot], ids[slot]);
+    else
+      fprintf(stderr, "probe: the game declined coach %u for Player %u\n", choices[slot], slot + 1);
+  }
+  return 1;
+}
+
 void jd2014_probe_lobby_update(void) {
   if (!map_seen || !ready_lobby || cpu.r[3] != ready_lobby || launch_requested) return;
   uint32_t manager = rd32(cpu.r[13] - GAME_MANAGER_SDA_OFFSET);
@@ -206,9 +257,9 @@ void jd2014_probe_lobby_update(void) {
     known_count = (int)connected;
     fprintf(stderr, "probe: original lobby sees %u connected players\n", connected);
   }
-  if (!connected) return;
+  if (!connected || !apply_coach_choices(manager)) return;
 
-  // The normal Start action lets the game choose coaches for the connected players.
+  // The original Start action fills in any choices left on automatic.
   launch_requested = 1;
   guest_call(LOBBY_PREPARE_LAUNCH, ready_lobby);
   fprintf(stderr, "probe: selected the original lobby Start action at %.0f ms\n", (double)time_base() / 60750);

@@ -76,8 +76,9 @@ def newest_dlc_songs(dlc, edition_order):
     return list(newest.values())
 
 
-def write_catalog(staging, collection, dlc=(), levels=None):
+def write_catalog(staging, collection, dlc=(), levels=None, coaches=None):
     levels = levels or {}
+    coaches = coaches or {}
     dlc = newest_dlc_songs(dlc, collection.keys())
     pages = [(edition, disc, f"songs_{disc}", songs)
              for disc, (edition, songs) in collection.items()]
@@ -91,6 +92,9 @@ def write_catalog(staging, collection, dlc=(), levels=None):
             if (disc, song) in levels:
                 preview, gameplay = levels[disc, song]
                 fields.extend((f".preview_gain = {preview:.7f}f", f".gameplay_gain = {gameplay:.7f}f"))
+            count = coaches.get((disc or song[4], song[2].lower()), 0)
+            if count > 1:
+                fields.append(f".coach_count = {count}")
             entries.append("  {" + ", ".join(fields) + "},")
         arrays.append("\n".join([f"static const Song {name}[] = {{", *entries, "};", ""]))
         source = json.dumps(disc) if disc else "NULL"

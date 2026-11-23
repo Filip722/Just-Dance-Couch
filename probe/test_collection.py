@@ -28,6 +28,20 @@ class CatalogTest(unittest.TestCase):
             self.assertIn(f'"{key}"', catalog)
         self.assertNotIn('"76c1b9c7"', catalog)
 
+    def test_coach_counts_follow_the_disc_or_dlc_pack(self):
+        collection = {"SJOE41": ("Just Dance 2014", [("Get Lucky", "Daft Punk", "GetLucky"),
+                                                      ("Just Dance", "Lady Gaga", "JustDance")])}
+        dlc = [("One Thing", "One Direction", "OneThingDLC", "SJOE41", "jd2014-pack", 26)]
+        coaches = {("SJOE41", "getlucky"): 2, ("jd2014-pack", "onethingdlc"): 2}
+
+        with TemporaryDirectory() as staging:
+            write_catalog(Path(staging), collection, dlc, coaches=coaches)
+            catalog = (Path(staging) / "collection_catalog.h").read_text(encoding="utf-8")
+
+        self.assertIn('"GetLucky", .coach_count = 2', catalog)
+        self.assertIn('"OneThingDLC", "SJOE41", "jd2014-pack", 26, .coach_count = 2', catalog)
+        self.assertIn('"JustDance"},', catalog)
+
     def test_prefers_the_standard_dlc_routine_in_the_same_edition(self):
         standard = ("Let It Go", "Disney Frozen", "LetItGoDLC", "SE3E41", "jd2015", 23)
         alternate = ("Let It Go (Alternate)", "Disney Frozen", "Alternate", "SE3E41", "jd2015", 4)

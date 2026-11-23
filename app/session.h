@@ -16,6 +16,8 @@ enum SessionMessageType {
   RECAP_ENTERED,
   TEST_BUTTONS,
   USB_DISCOVERY,
+  PREPARE_SONG,
+  START_DANCE,
 };
 
 typedef struct {

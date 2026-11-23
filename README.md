@@ -57,6 +57,8 @@ Use `"$couch" --loopback` to check the picker and launch flow with a keyboard. R
 
 From the first song row, press **Up** to focus the edition name. Use **Left** and **Right** to switch editions, then **Down** to return to the songs. Hold a direction to keep moving.
 
+In **Just Dance 2014** and its supported DLC, pressing **A** on a song with several dancers opens the coach picker. Each player uses **Left** or **Right** to choose, **A** to lock in, and **B** to unlock. Player 1 presses **+** to start, and the game assigns any unlocked players automatically. Press **+** from the grid for Quick Start. With the keyboard, **Enter**, **Backspace**, and **Space** act as **A**, **B**, and **+**.
+
 ## Song library and DLC
 
 Each disc page shows that edition’s full supported Classic catalog. The **DLC** page follows **Just Dance 2019** when add-ons are available. The build imports USA Wii add-ons for **Just Dance 2–4**, **Just Dance 2014**, and **Just Dance 2015**.
