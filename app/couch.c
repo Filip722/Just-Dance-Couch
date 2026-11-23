@@ -28,8 +28,9 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
 enum {
   WORKER_SOCKET = 3, STOP_GRACE_MS = 6000,
   DPAD_BUTTONS = BUTTON_LEFT | BUTTON_RIGHT | BUTTON_UP | BUTTON_DOWN,
-  PICKER_BUTTONS = DPAD_BUTTONS | BUTTON_A | BUTTON_B | BUTTON_PLUS | BUTTON_HOME,
-  REMOTE_BUTTONS = PICKER_BUTTONS | BUTTON_TWO | BUTTON_ONE | BUTTON_MINUS,
+  PICKER_BUTTONS = DPAD_BUTTONS | BUTTON_A | BUTTON_B | BUTTON_PLUS | BUTTON_MINUS | BUTTON_HOME,
+  REMOTE_BUTTONS = PICKER_BUTTONS | BUTTON_TWO | BUTTON_ONE,
+  DOUBLE_MINUS_MS = 600,
   DPAD_REPEAT_DELAY_MS = 350, DPAD_REPEAT_INTERVAL_MS = 110,
   REMOTE_LEDS = 0x11, PLAYER_ONE_LED = 0x10,
 };
@@ -52,10 +53,10 @@ typedef struct {
   int edition, worker_edition, row, first_row, edition_focused, choosing_coaches;
   enum StartMode pending_song;
   CoachPicker coaches;
-  int usb, usb_available;
+  int usb, usb_available, quit;
   pthread_t usb_thread;
   uint16_t held;
-  uint64_t launch_started, stop_at, repeat_at;
+  uint64_t launch_started, stop_at, repeat_at, last_minus;
   BrowserRemote remotes[REMOTE_PLAYERS];
   enum ReturnReason reason;
   const char *status;
@@ -122,6 +123,7 @@ static void remote_disconnected(Browser *browser, int player) {
     browser->release_required = 1;
   }
   remote->connected = 0;
+  if (!player) browser->last_minus = 0;
   browser->coaches.present &= ~(1u << player);
   browser->coaches.locked &= ~(1u << player);
   if (browser->active && browser->reason == RUNNING)
@@ -205,6 +207,7 @@ static void start_dance(Browser *browser, enum StartMode mode) {
   const Song *song = &editions[browser->edition].songs[browser->row];
   if (!song->map) return;
   if (!browser->loopback && !browser->remotes[0].connected) return;
+  browser->last_minus = 0;
   if (browser->worker && (browser->worker_edition != browser->edition || browser->reason != RUNNING)) {
     browser->pending_song = mode;
     end_dance(browser, CANCELLED);
@@ -372,6 +375,17 @@ static void repeat_dpad(Browser *browser, uint64_t now) {
   }
 }
 
+static void menu_exit(Browser *browser, unsigned player, uint16_t buttons) {
+  if (player || !buttons) return;
+  if (buttons != BUTTON_MINUS || (browser->active && !browser->choosing_coaches) || browser->pending_song) {
+    browser->last_minus = 0;
+    return;
+  }
+  uint64_t now = SDL_GetTicks();
+  if (browser->last_minus && now - browser->last_minus <= DOUBLE_MINUS_MS) browser->quit = 1;
+  browser->last_minus = now;
+}
+
 static uint16_t keyboard_button(SDL_Keycode key) {
   switch (key) {
     case SDLK_LEFT: return BUTTON_LEFT;
@@ -396,6 +410,8 @@ static void handle_report(Browser *browser, int player, uint8_t *report, unsigne
       uint16_t actions = controls & PICKER_BUTTONS;
       uint16_t pressed_now = actions & ~remote->held;
       remote->held = actions;
+      menu_exit(browser, player, pressed_now);
+      if (browser->quit) return;
       if (choosing) pick_coach(browser, player, pressed_now);
       else if (primary) update_buttons(browser, actions);
     }
@@ -511,6 +527,8 @@ static void update_worker(Browser *browser) {
 
 static void paint(const Browser *browser) {
   const char *hint = browser->status;
+  if (browser->last_minus && SDL_GetTicks() - browser->last_minus <= DOUBLE_MINUS_MS)
+    hint = "Press - again to exit";
   if (!browser->loopback && !browser->remotes[0].connected) {
     if (first_remote(browser) > 0) hint = "Connect a Wii Remote as Player 1 to start";
     else if (!hint) hint = browser->usb >= 0 ? "Wake your Wii Remote or press SYNC" : "Connect a Wii Remote";
@@ -564,16 +582,15 @@ int main(int count, char **arguments) {
     if (!browser.usb_available) browser.status = "Could not start Nintendo USB adapter";
   }
   uint64_t next_scan = 0;
-  int quit = 0;
   browser.warm_next = 1;
-  while (!quit) {
+  while (!browser.quit) {
     SDL_Event event;
     if (SDL_WaitEventTimeout(&event, 16)) {
-      if (event.type == SDL_EVENT_QUIT) quit = 1;
+      if (event.type == SDL_EVENT_QUIT) browser.quit = 1;
       if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE) {
         if (browser.pending_song) browser.pending_song = NO_START;
         else if (browser.active) end_dance(&browser, browser.recap ? COMPLETED : CANCELLED);
-        else quit = 1;
+        else browser.quit = 1;
       }
       if (browser.loopback) {
         if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) browser.held = 0;
@@ -594,14 +611,14 @@ int main(int count, char **arguments) {
     if (browser.usb_available) usb_reports(&browser);
     for (int player = 0; player < REMOTE_PLAYERS; player++)
       if (browser.remotes[player].fd >= 0) remote_reports(&browser, player);
-    if (!quit) repeat_dpad(&browser, now);
+    if (!browser.quit) repeat_dpad(&browser, now);
     if (browser.worker) update_worker(&browser);
     // Start warming once horizontal browsing stops on an edition.
-    if (!quit && !browser.worker && browser.warm_next && !(browser.held & (BUTTON_LEFT | BUTTON_RIGHT))) {
+    if (!browser.quit && !browser.worker && browser.warm_next && !(browser.held & (BUTTON_LEFT | BUTTON_RIGHT))) {
       browser.warm_next = 0;
       start_worker(&browser, QUICK_START);
     }
-    if (!browser.playing) paint(&browser);
+    if (!browser.quit && !browser.playing) paint(&browser);
   }
   browser.pending_song = NO_START;
   if (browser.worker) {

@@ -4,7 +4,7 @@ Just Dance Couch is a native Linux launcher for your own Just Dance Wii backups.
 
 ## Build from source
 
-Use Linux on an x86-64-v3 CPU with a working Vulkan driver. Install Python 3.12 or newer, Clang (`clang` on your `PATH`), CMake, Ninja, `pkg-config`, FFmpeg, GNU binutils, and `patch`. Install the development packages for GLFW, SDL3, Vulkan, shaderc, ALSA, Fontconfig, FreeType, and libusb-1.0. If SDL3 is installed in a custom location, export `SDL3_PREFIX` with its installation path before building.
+Use Linux on an x86-64-v3 CPU with a working Vulkan driver. Install Python 3.12 or newer, Clang (`clang` on your `PATH`), CMake, Ninja, `pkg-config`, FFmpeg, GNU binutils, the LZO2 runtime library, and `patch`. Install the development packages for GLFW, SDL3, Vulkan, shaderc, ALSA, Fontconfig, FreeType, and libusb-1.0. If SDL3 is installed in a custom location, export `SDL3_PREFIX` with its installation path before building.
 
 The launcher build requires the **12 USA Wii disc backups** listed below. Use **revision 1** for Just Dance 3 and **revision 0** for the other editions. The build checks each disc's region, revision, and executable. It downloads pinned dependencies as needed and stores the extracted discs, compiled code, and previews locally.
 
@@ -45,7 +45,7 @@ couch="${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/bin/just-dance-couch"
 
 Connect up to four Wii Remotes in the picker. For first-time pairing, press the red **SYNC** button inside each remote's battery compartment. Wait for its numbered light to go solid before waking or syncing the next one. On later launches, wake the paired remotes with a button press.
 
-Players get the lowest free number as they connect. Other players keep their numbers when a remote disconnects. The lowest-numbered connected remote controls the picker and can return to it during a dance. If Player 1 disconnects, wake or reconnect a remote to fill that slot before starting another song. Press **Escape** in the picker to exit and release the module.
+Players get the lowest free number as they connect. Other players keep their numbers when a remote disconnects. The lowest-numbered connected remote controls the picker and can return to it during a dance. If Player 1 disconnects, wake or reconnect a remote to fill that slot before starting another song. To exit and release the module, press **−** twice quickly on Player 1’s remote while the song grid or coach picker is open. **Escape** exits from the song grid.
 
 Use `"$couch" --loopback` to check the picker and launch flow with a keyboard. Running `"$couch"` without flags uses a BlueZ-paired Wii Remote through a hidraw device with read and write permissions and a driver that leaves HID reporting to userspace.
 
@@ -57,7 +57,7 @@ Use `"$couch" --loopback` to check the picker and launch flow with a keyboard. R
 
 From the first song row, press **Up** to focus the edition name. Use **Left** and **Right** to switch editions, then **Down** to return to the songs. Hold a direction to keep moving.
 
-In **Just Dance 2014** and its supported DLC, pressing **A** on a song with several dancers opens the coach picker. Each player uses **Left** or **Right** to choose, **A** to lock in, and **B** to unlock. Player 1 presses **+** to start, and the game assigns any unlocked players automatically. Press **+** from the grid for Quick Start. With the keyboard, **Enter**, **Backspace**, and **Space** act as **A**, **B**, and **+**.
+Press **A** on a multi-dancer song in **Just Dance 3**, **Just Dance Greatest Hits**, **Just Dance 4**, or **Just Dance 2014–2019** to open the coach picker. This also works with supported DLC in those editions. Each player uses **Left** or **Right** to choose, **A** to lock in, and **B** to unlock. Player 1 presses **+** to start, and the game assigns any unlocked players automatically. Press **+** from the grid for Quick Start. With the keyboard, **Enter**, **Backspace**, and **Space** act as **A**, **B**, and **+**. The original **Just Dance** has solo choreography. **Just Dance 2** and **Summer Party** assign duet roles by Wii Remote slot.
 
 ## Song library and DLC
 

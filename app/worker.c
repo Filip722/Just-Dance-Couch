@@ -80,8 +80,11 @@ const char *jd_couch_requested_map(void) {
 int jd_couch_coach_choices(uint8_t choices[REMOTE_PLAYERS]) {
   int state = atomic_load(&coach_state);
   if (state == WAITING_FOR_COACHES) return 0;
-  if (state == COACHES_CONFIRMED) memcpy(choices, confirmed_coaches, sizeof confirmed_coaches);
-  return 1;
+  if (state == COACHES_CONFIRMED) {
+    memcpy(choices, confirmed_coaches, sizeof confirmed_coaches);
+    return selected_song()->coach_count;
+  }
+  return 1;  // Quick Start uses the original assignments.
 }
 
 #define LEVEL_PEAK 27570.0f  // -1.5 dBFS at the native sample rate.

@@ -2,6 +2,7 @@
 enum GhStage { GH_BOOT, GH_TITLE, GH_MAIN_MENU, GH_CAROUSEL, GH_LOBBY, GH_TRANSITION, GH_DANCE };
 static enum GhStage gh_stage;
 static uint64_t gh_stage_entered;
+enum { GH_MENU_SETTLE_MS = 1500 };
 static unsigned gh_first_card_at;
 static int gh_movie_confirmed, gh_movie_visible, gh_recap, jd4_scene_confirmed;
 
@@ -35,7 +36,7 @@ void gh_probe_track(void) {
   // The stock flow can start preview audio or enter the lobby before its run track.
   if (gh_stage == GH_MAIN_MENU &&
       (!strcmp(track, carousel) || (jd3_download && !strcmp(track, "FlowView_trk_PlayAudio")) ||
-       (jd3 && entering_lobby))) {
+       entering_lobby)) {
     if (!jd2_catalog_ready) {
       fprintf(stderr, "probe: the %s catalog could not be prepared\n", jd2_edition->name);
       exit(2);
@@ -57,23 +58,66 @@ void gh_probe_track(void) {
     }
   }
   if (next != gh_stage) {
+    if (next == GH_LOBBY) fprintf(stderr, "probe: original lobby checking inputs\n");
     gh_stage = next;
     gh_stage_entered = time_base();
   }
 }
 
+static int gh_lobby_input(unsigned player, unsigned elapsed, int jd4, uint32_t *held, float *x, float *y) {
+  enum {
+    GRIP_READY_MS = 4500, CURSOR_READY_MS = 1900,
+    AIM_MS = 420, PRESS_MS = 410, WAKE_MS = 2350, CHOOSE_MS = 1600,
+  };
+  static uint8_t choices[PLAYERS];
+  static unsigned count, choose_at;
+  if (!count) {
+    count = jd_couch_coach_choices ? jd_couch_coach_choices(choices) : 1;
+    if (count > 1 && !choices[0] && !choices[1] && !choices[2] && !choices[3]) count = 1;
+  }
+  if (count == 1) return player == 0;
+  if (player && (!choices[player] || !link_linked(player))) return 0;
+
+  unsigned ready = jd4 ? CURSOR_READY_MS : GRIP_READY_MS;
+  if (count && !choose_at && elapsed >= ready) choose_at = elapsed;
+  unsigned phase = elapsed - choose_at;
+  unsigned wake = jd4 ? WAKE_MS : 0;
+  if (choose_at && phase >= wake + CHOOSE_MS) return player == 0;
+
+  *held = 0;
+  if (!choose_at) {
+    // Just Dance 3 and Greatest Hits accept A anywhere on the grip reminder.
+    // Aim above the coach cards so these confirmations cannot start a dance.
+    *y = -0.60f;
+    if (!jd4 && elapsed >= GH_MENU_SETTLE_MS && elapsed < GRIP_READY_MS &&
+        (elapsed - GH_MENU_SETTLE_MS) % JD1_CONFIRM_PERIOD_MS < PRESS_MS)
+      *held = BUTTON_A;
+  } else if (phase < wake) {
+    // Just Dance 4 uses the first A to wake a secondary cursor. Wake it over
+    // empty space before pressing the original coach widget.
+    *y = -0.60f;
+    if (player && phase >= AIM_MS && phase < AIM_MS + PRESS_MS) *held = BUTTON_A;
+  } else if (choices[player]) {
+    *x = (choices[player] - (count + 1) * 0.5f) * (jd4 ? 0.44f : 0.43f);
+    *y = jd4 ? 0.35f : 0.03f;
+    phase -= wake;
+    if (phase >= AIM_MS && phase < AIM_MS + PRESS_MS) *held = BUTTON_A;
+  }
+  return 1;
+}
+
 void gh_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_t count) {
-  if (channel || !count || gh_stage == GH_BOOT || gh_stage >= GH_TRANSITION ||
-      caller != jd2_edition->input_caller) return;
+  if (!count || channel >= PLAYERS || gh_stage == GH_BOOT || gh_stage >= GH_TRANSITION ||
+      (channel && gh_stage != GH_LOBBY) || caller != jd2_edition->input_caller) return;
 
   // Let the stock transition lay out the cards. Right moves from the mode
   // card to the first routine, which the verified catalog swap selected.
   enum {
     FIRST_CARD_MS = 900, RIGHT_HELD_MS = 230, CAROUSEL_SETTLE_MS = 4400,
-    MENU_SETTLE_MS = 1500, CONFIRM_HELD_MS = 330,
+    CONFIRM_HELD_MS = 330,
   };
   unsigned elapsed = (time_base() - gh_stage_entered) / JD1_TICKS_PER_MS;
-  unsigned settle = gh_stage == GH_CAROUSEL ? CAROUSEL_SETTLE_MS : MENU_SETTLE_MS;
+  unsigned settle = gh_stage == GH_CAROUSEL ? CAROUSEL_SETTLE_MS : GH_MENU_SETTLE_MS;
   if (gh_stage == GH_TITLE) settle = 0;
   int jd4 = jd2_edition->title_low == JD4_TITLE_LOW;
   int jd3_download = jd2_edition->title_low == SJDE41_TITLE_LOW && dlc_index();
@@ -104,20 +148,21 @@ void gh_probe_input(uint32_t caller, uint32_t channel, uint32_t buffer, uint32_t
     y = -0.25f;
   }
   if (!jd4 && gh_stage == GH_LOBBY) y = 0.76f;
+  if (gh_stage == GH_LOBBY && !gh_lobby_input(channel, elapsed, jd4, &held, &x, &y)) return;
 
-  static uint32_t previous;
+  static uint32_t previous[PLAYERS];
   // The scripted Just Dance 3 and Greatest Hits menus own navigation until the dance starts.
   const uint32_t menu_buttons = jd4 ? (BUTTON_A | BUTTON_RIGHT) : UINT32_MAX;
   for (uint32_t i = 0; i < count && i < JD2_KPAD_MAX_SAMPLES; i++) {
     uint32_t pad = buffer + i * JD2_KPAD_STATUS_BYTES;
     wr32(pad + JD1_KPAD_HOLD, (rd32(pad + JD1_KPAD_HOLD) & ~menu_buttons) | held);
-    wr32(pad + JD1_KPAD_TRIGGER, (rd32(pad + JD1_KPAD_TRIGGER) & ~menu_buttons) | (held & ~previous));
-    wr32(pad + JD1_KPAD_RELEASE, (rd32(pad + JD1_KPAD_RELEASE) & ~menu_buttons) | (previous & ~held));
+    wr32(pad + JD1_KPAD_TRIGGER, (rd32(pad + JD1_KPAD_TRIGGER) & ~menu_buttons) | (held & ~previous[channel]));
+    wr32(pad + JD1_KPAD_RELEASE, (rd32(pad + JD1_KPAD_RELEASE) & ~menu_buttons) | (previous[channel] & ~held));
     wr32(pad + JD1_KPAD_POINTER, float_bits(x));
     wr32(pad + JD1_KPAD_POINTER + 4, float_bits(y));
     wr8(pad + JD1_KPAD_POINTER_VALID, JD1_POINTER_SEEN);
   }
-  previous = held;
+  previous[channel] = held;
 }
 
 void gh_probe_movie(void) {

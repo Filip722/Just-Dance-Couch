@@ -23,6 +23,8 @@ from probe.instrument import (
 )
 from probe.legacy_ubiart import CLASSIC_CATALOGS
 from probe.loudness import prepare_loudness
+from probe.lyn_coach_art import prepare_lyn_coach_art
+from probe.lyn_previews import entries as lyn_entries
 from probe.previews import archive_entries, prepare_previews
 
 
@@ -301,6 +303,8 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
     prepare_probe_adapter()
 
     collection, coaches = {}, {}
+    lyn_editions = {"SJDE41": ("JD3.bf", jd3.SONGS), "SJHE41": ("JD3SP2.bf", gh.SONGS),
+                    "SJXE41": ("JD4.bf", jd4.SONGS)}
     for disc_id in EMBEDDED_TITLES:
         disc = CACHE / "discs" / disc_id
         verify_disc(disc, disc_id)
@@ -337,11 +341,16 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
                 keys = None
             previews = CACHE / "previews" / disc_id
             prepare_previews(disc, previews, jobs, keys)
-            if disc_id == "SJOE41":
-                counts = prepare_coach_art(archive_entries(disc / "files", compressed=True), previews,
-                                           (song[2] for song in collection[disc_id][1]))
-                coaches.update(((disc_id, name), count) for name, count in counts.items())
+            counts = prepare_coach_art(archive_entries(disc / "files", compressed=True), previews,
+                                       (song[2] for song in collection[disc_id][1]))
+            coaches.update(((disc_id, name), count) for name, count in counts.items())
             instrument(title_build / "generated", disc_id)
+        if disc_id in lyn_editions:
+            archive, songs = lyn_editions[disc_id]
+            counts = prepare_lyn_coach_art(dict(lyn_entries(disc / "files" / archive)),
+                                           CACHE / "previews" / disc_id,
+                                           {key: stem for key, _, _, stem, *_ in songs})
+            coaches.update(((disc_id, key), count) for key, count in counts.items())
         subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
 
     dlc_songs = dlc.prepare_dlc(dlc_directory, CACHE / "dlc", CACHE / "discs", jobs, coaches)

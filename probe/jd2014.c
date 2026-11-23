@@ -204,6 +204,22 @@ void jd2014_probe_lobby_ready(void) {
   }
 }
 
+static void choose_coach(uint32_t action, uint32_t manager, uint32_t player, unsigned coach) {
+  Cpu saved = cpu;
+  cpu.r[3] = manager;
+  cpu.r[4] = player;
+  cpu.r[5] = coach;
+  dispatch(action);
+  cpu = saved;
+}
+
+static void report_coach(unsigned slot, unsigned coach, unsigned player, int assigned) {
+  if (assigned)
+    fprintf(stderr, "probe: Player %u chose coach %u (native player %u)\n", slot + 1, coach, player);
+  else
+    fprintf(stderr, "probe: the game declined coach %u for Player %u\n", coach, slot + 1);
+}
+
 static int apply_coach_choices(uint32_t manager) {
   uint8_t choices[PLAYERS] = {0};
   if (jd_couch_coach_choices && !jd_couch_coach_choices(choices)) return 0;
@@ -230,20 +246,15 @@ static int apply_coach_choices(uint32_t manager) {
     dispatch(MANAGER_PLAYER_COACH);
     // The original selection action toggles a coach off when selected twice.
     if (cpu.r[3] != coach) {
-      cpu.r[3] = manager;
-      cpu.r[4] = ids[slot];
-      cpu.r[5] = coach;
-      dispatch(MANAGER_ASSIGN_COACH);
+      cpu = saved;
+      choose_coach(MANAGER_ASSIGN_COACH, manager, ids[slot], coach);
       cpu.r[3] = manager;
       cpu.r[4] = ids[slot];
       dispatch(MANAGER_PLAYER_COACH);
     }
     int assigned = cpu.r[3] == coach;
     cpu = saved;
-    if (assigned)
-      fprintf(stderr, "probe: Player %u chose coach %u (native player %u)\n", slot + 1, choices[slot], ids[slot]);
-    else
-      fprintf(stderr, "probe: the game declined coach %u for Player %u\n", choices[slot], slot + 1);
+    report_coach(slot, choices[slot], ids[slot], assigned);
   }
   return 1;
 }
@@ -295,6 +306,10 @@ typedef struct {
   uint32_t direct_caller, database_ready, get_song, make_string, destroy_string;
   uint32_t set_mode, set_song, stop_lobby_timer, start_lobby;
   uint32_t lobby_howto_caller, splash_end, boot_wait_callers[4];
+  struct {
+    unsigned manager_offset, coach_offset;
+    uint32_t player_at, choose;
+  } coaches;
 } UbiArtPort;
 
 static const UbiArtPort ubiart_ports[] = {
@@ -302,27 +317,32 @@ static const UbiArtPort ubiart_ports[] = {
   {0x53453345, 0x6838caf6eb441eebull, 22160, 176, 412, 8, 22344,
    0x8023ae90, 0x80253160, 0x80254b2c, 0x800178ec, 0x8001784c,
    0x8022d39c, 0x8022d130, 0x80213560, 0x80126090,
-   0x801fab2c, 0x8007b1f4, {0x80183bc0, 0x80183f7c, 0x801843e0}},
+   0x801fab2c, 0x8007b1f4, {0x80183bc0, 0x80183f7c, 0x801843e0},
+   {21496, 8, 0x802273e4, 0x8022ea24}},
   // Just Dance 2016 (SJNE41)
   {0x534a4e45, 0x982a35fc4bc22d63ull, 20664, 152, 0, 7, 20840,
    0x80550994, 0x8056bd04, 0x8056d6d0, 0x8000a448, 0x8000a3a8,
    0x80546a04, 0x80546798, 0x80536950, 0x80447668,
-   0x80519960, 0x80630684, {0x8049dbcc, 0x8049df7c, 0x8049e2c8, 0x8049e72c}},
+   0x80519960, 0x80630684, {0x8049dbcc, 0x8049df7c, 0x8049e2c8, 0x8049e72c},
+   {19584, 44, 0x8067acdc, 0x80566920}},
   // Just Dance 2017 (SZ7E41)
   {0x535a3745, 0x2a329d91781d87a0ull, 20640, 152, 0, 7, 20816,
    0x80551d34, 0x8056d4c8, 0x8056ee94, 0x8000a448, 0x8000a3a8,
    0x80547da4, 0x80547b38, 0x80537c58, 0x804481b0,
-   0x8051adc0, 0x80632bdc, {0x8049eb8c, 0x8049ef3c, 0x8049f288, 0x8049f6ec}},
+   0x8051adc0, 0x80632bdc, {0x8049eb8c, 0x8049ef3c, 0x8049f288, 0x8049f6ec},
+   {19536, 44, 0x8067d1d8, 0x805680c4}},
   // Just Dance 2018 (SE8E41)
   {0x53453845, 0xe8cdcc699a88d248ull, 20656, 152, 0, 7, 20832,
    0x80550c88, 0x8056cac4, 0x8056e490, 0x8000a4e8, 0x8000a448,
    0x80546cec, 0x80546a80, 0x80536a14, 0x804489d0,
-   0x80519ba4, 0x80630c3c, {0x8049debc, 0x8049e278, 0x8049e6dc}},
+   0x80519ba4, 0x80630c3c, {0x8049debc, 0x8049e278, 0x8049e6dc},
+   {19712, 44, 0x806745f0, 0x8056710c}},
   // Just Dance 2019 (S5EE41)
   {0x53354545, 0x351e518638c91d83ull, 21480, 152, 0, 7, 21656,
    0x80541458, 0x8055cfbc, 0x8055e988, 0x8000a290, 0x8000a1f0,
    0x80536848, 0x805365dc, 0x805268cc, 0x8043e834,
-   0x80509a7c, 0x80614304, {0x80492dec, 0x804931a8, 0x8049360c}},
+   0x80509a7c, 0x80614304, {0x80492dec, 0x804931a8, 0x8049360c},
+   {20536, 44, 0x80657bf8, 0x80557624}},
 };
 static const UbiArtPort *active_port;
 
@@ -438,10 +458,41 @@ void jd2015_probe_lobby_phase(void) {
   lobby_armed = 1;
 }
 
+static int apply_ubiart_coaches(const UbiArtPort *port) {
+  uint8_t choices[PLAYERS] = {0};
+  if (jd_couch_coach_choices && !jd_couch_coach_choices(choices)) return 0;
+  uint32_t manager = rd32(cpu.r[13] - port->coaches.manager_offset);
+  uint32_t players[PLAYERS] = {0};
+  Cpu saved = cpu;
+  for (unsigned slot = 0; slot < PLAYERS; slot++) {
+    if (!choices[slot] || !link_linked(slot)) continue;
+    // These Wii lobbies use the WPAD channel as the player index.
+    cpu.r[3] = manager;
+    cpu.r[4] = slot;
+    dispatch(port->coaches.player_at);
+    players[slot] = cpu.r[3];
+    cpu = saved;
+    if (!players[slot]) return 0;
+  }
+  for (unsigned slot = 0; slot < PLAYERS; slot++) {
+    if (!players[slot]) continue;
+    uint32_t field = players[slot] + port->coaches.coach_offset;
+    unsigned choice = choices[slot] - 1;
+    if (rd32(field) != choice) choose_coach(port->coaches.choose, manager, slot, choice);
+    report_coach(slot, choices[slot], slot, rd32(field) == choice);
+  }
+  return 1;
+}
+
 void jd2015_probe_lobby_update(void) {
   if (!lobby_armed || cpu.r[3] != ready_lobby || launch_requested) return;
+  static int timer_stopped;
+  if (!timer_stopped) {
+    guest_call(active_port->stop_lobby_timer, rd32(cpu.r[13] - active_port->lobby_timer_offset));
+    timer_stopped = 1;
+  }
+  if (!apply_ubiart_coaches(active_port)) return;
   launch_requested = 1;
-  guest_call(active_port->stop_lobby_timer, rd32(cpu.r[13] - active_port->lobby_timer_offset));
   guest_call(active_port->start_lobby, ready_lobby);
   fprintf(stderr, "probe: selected the original lobby Start action\n");
 }
