@@ -1,0 +1,71 @@
+--- a/nod-ffi/src/handle.rs
++++ b/nod-ffi/src/handle.rs
+@@ -26,42 +26,39 @@
+     File(OwnedFileReader),
+ }
+
+-impl NodHandleInner {
+-    fn as_read(&mut self) -> &mut dyn Read {
++impl Read for NodHandleInner {
++    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+         match self {
+-            NodHandleInner::Disc(r) => r,
+-            NodHandleInner::Partition { reader, .. } => reader.as_mut(),
+-            NodHandleInner::File(r) => r,
+-        }
+-    }
+-
+-    fn as_seek(&mut self) -> &mut dyn Seek {
+-        match self {
+-            NodHandleInner::Disc(r) => r,
+-            NodHandleInner::Partition { reader, .. } => reader.as_mut(),
+-            NodHandleInner::File(r) => r,
+-        }
+-    }
+-
+-    fn as_bufread(&mut self) -> &mut dyn BufRead {
+-        match self {
+-            NodHandleInner::Disc(r) => r,
+-            NodHandleInner::Partition { reader, .. } => reader.as_mut(),
+-            NodHandleInner::File(r) => r,
++            Self::Disc(r) => r.read(buf),
++            Self::Partition { reader: r, .. } => r.read(buf),
++            Self::File(r) => r.read(buf),
+         }
+     }
+ }
+
+-impl Read for NodHandleInner {
+-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.as_read().read(buf) }
+-}
+-
+ impl BufRead for NodHandleInner {
+-    fn fill_buf(&mut self) -> io::Result<&[u8]> { self.as_bufread().fill_buf() }
+-
+-    fn consume(&mut self, n: usize) { self.as_bufread().consume(n); }
++    fn fill_buf(&mut self) -> io::Result<&[u8]> {
++        match self {
++            Self::Disc(r) => r.fill_buf(),
++            Self::Partition { reader: r, .. } => r.fill_buf(),
++            Self::File(r) => r.fill_buf(),
++        }
++    }
++    fn consume(&mut self, n: usize) {
++        match self {
++            Self::Disc(r) => r.consume(n),
++            Self::Partition { reader: r, .. } => r.consume(n),
++            Self::File(r) => r.consume(n),
++        }
++    }
+ }
+
+ impl Seek for NodHandleInner {
+-    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> { self.as_seek().seek(pos) }
++    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
++        match self {
++            Self::Disc(r) => r.seek(pos),
++            Self::Partition { reader: r, .. } => r.seek(pos),
++            Self::File(r) => r.seek(pos),
++        }
++    }
+ }

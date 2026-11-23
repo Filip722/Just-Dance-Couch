@@ -1,0 +1,132 @@
+--- a/recomp/runtime/drive.c
++++ b/recomp/runtime/drive.c
+@@ -10,6 +10,13 @@
+ #include "memory_watch.h"
+ #include "drive.h"
+ #include "title.h"
++
++#ifdef __linux__
++extern int jd_image_open(const char *, uint8_t *, size_t) __attribute__((weak));
++extern void jd_image_close(void) __attribute__((weak));
++extern int jd_image_read(uint64_t, uint32_t, uint8_t *) __attribute__((weak));
++extern size_t jd_image_metadata(int, uint8_t *, size_t) __attribute__((weak));
++#endif
+
+ enum {
+   NAME_LIMIT = 1024, MAX_PIECES = 16384, ENTRY_BYTES = 12,
+@@ -42,7 +49,7 @@
+ static char *sources[MAX_PIECES];
+ static int source_count;
+ static int has_disc;
+-static int is_image;
++static int is_image, original_image;
+ static Part ticket, tmd, native, shaders;  // In the image, or from the folder's own files.
+ static char folder_ticket[NAME_LIMIT], folder_tmd[NAME_LIMIT];
+ static uint8_t raw[RAW_BYTES];
+@@ -76,6 +83,10 @@
+ }
+
+ void drive_eject(void) {
++#ifdef __linux__
++  if (original_image) jd_image_close();
++#endif
++  original_image = 0;
+   if (open_file) fclose(open_file);
+   open_file = 0;
+   open_source = -1;
+@@ -87,6 +98,7 @@
+ }
+
+ int drive_has_disc(void) { return has_disc; }
++int drive_original_image(void) { return original_image; }
+
+ static int add_source(const char *path) {
+   if (source_count == MAX_PIECES) return -1;
+@@ -249,11 +261,22 @@
+   drive_eject();
+   struct stat info;
+   if (stat(path, &info)) { perror(path); return 0; }
+-  int ok = S_ISDIR(info.st_mode) ? insert_folder(path) : insert_image(path);
++  int ok;
++  if (S_ISDIR(info.st_mode)) {
++    ok = insert_folder(path);
++  } else {
++    int direct = -1;
++#ifdef __linux__
++    if (jd_image_open) direct = jd_image_open(path, raw, sizeof raw);
++#endif
++    ok = direct < 0 ? insert_image(path) : direct;
++    original_image = direct > 0;
++    if (original_image) has_disc = 1;
++  }
+   if (!ok) { drive_eject(); return 0; }
+   qsort(pieces, (size_t)piece_count, sizeof *pieces, by_offset);
+   if (has_disc) write_partition_table();
+-  if (has_disc) fprintf(stderr, "drive: %s, %d pieces\n", path, piece_count);
++  if (has_disc && !original_image) fprintf(stderr, "drive: %s, %d pieces\n", path, piece_count);
+   return 1;
+ }
+
+@@ -288,6 +311,12 @@
+   static int logged = -1;  // WII_RECOMP_DISC_LOG: each read's place in the data partition and size.
+   if (logged < 0) logged = getenv("WII_RECOMP_DISC_LOG") != 0;
+   if (logged) fprintf(stderr, "disc read %llx %x\n", (unsigned long long)offset, bytes);
++#ifdef __linux__
++  if (original_image) {
++    watch_before_write(out, bytes);
++    return jd_image_read(offset, bytes, out);
++  }
++#endif
+   int index = piece_from(offset);
+   while (bytes) {
+     const Piece *piece = index < piece_count ? &pieces[index] : 0;
+@@ -328,8 +357,25 @@
+   return got;
+ }
+
+-size_t drive_ticket(uint8_t *out, size_t limit) { return read_part(ticket, folder_ticket, out, limit); }
+-size_t drive_tmd(uint8_t *out, size_t limit) { return read_part(tmd, folder_tmd, out, limit); }
++size_t drive_ticket(uint8_t *out, size_t limit) {
++#ifdef __linux__
++  if (original_image) {
++    watch_before_write(out, limit);
++    return jd_image_metadata(0, out, limit);
++  }
++#endif
++  return read_part(ticket, folder_ticket, out, limit);
++}
++
++size_t drive_tmd(uint8_t *out, size_t limit) {
++#ifdef __linux__
++  if (original_image) {
++    watch_before_write(out, limit);
++    return jd_image_metadata(1, out, limit);
++  }
++#endif
++  return read_part(tmd, folder_tmd, out, limit);
++}
+
+ void *drive_shaders(size_t *bytes) {
+   enum { MOST_BYTES = 64 << 20 };
+--- a/recomp/runtime/drive.h
++++ b/recomp/runtime/drive.h
+@@ -12,6 +12,7 @@
+ int drive_insert(const char *path);
+ void drive_eject(void);
+ int drive_has_disc(void);
++int drive_original_image(void);
+
+ // Reads the data partition, at its own offsets. Returns 0 if any of it can't be read.
+ int drive_read(uint64_t offset, uint32_t bytes, uint8_t *out);
+--- a/recomp/runtime/main.c
++++ b/recomp/runtime/main.c
+@@ -216,7 +216,8 @@
+       load_title_beside(arguments[0]);
+       boot_from_folder(arguments[1], &boot);
+     } else {
+-      load_title_from_disc();
++      if (drive_original_image()) load_title_beside(arguments[0]);
++      else load_title_from_disc();
+       boot_from_disc(&boot);
+     }
+   }

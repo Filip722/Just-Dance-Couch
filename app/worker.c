@@ -17,6 +17,7 @@
 #include "audio.h"
 #include "input.h"
 #include "paths.h"
+#include "disc_image.h"
 #include "remote_link.h"
 #include "session.h"
 #include "song_grid.h"
@@ -315,7 +316,8 @@ static int check_header(const char *root, const char *disc, const char *relative
 
 int run_worker(char *program, const char *disc, const char *map, int socket, int simulated,
                int choose_coaches) {
-  char cache[PATH_MAX], state[PATH_MAX], sys[PATH_MAX], saves[PATH_MAX], nand[PATH_MAX], builtin[24];
+  char cache[PATH_MAX], state[PATH_MAX], sys[PATH_MAX], image[PATH_MAX];
+  char saves[PATH_MAX], nand[PATH_MAX], builtin[24];
   if (!strcmp(disc, "DLC")) {
     const Edition *page = &editions[edition_count - 1];
     char *end;
@@ -331,6 +333,7 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   if (!root_path(cache, sizeof cache, "XDG_CACHE_HOME", ".cache") ||
       !root_path(state, sizeof state, "XDG_DATA_HOME", ".local/share") ||
       snprintf(sys, sizeof sys, "%s/discs/%s/sys", cache, disc) >= (int)sizeof sys ||
+      snprintf(image, sizeof image, "%s/images/%s", cache, disc) >= (int)sizeof image ||
       snprintf(saves, sizeof saves, "%s/%s", state, disc) >= (int)sizeof saves) return 10;
   if (add_on && (snprintf(nand, sizeof nand, "%s/dlc/%s/mounts/%u", cache,
                           add_on->pack, add_on->content_index) >= (int)sizeof nand ||
@@ -339,8 +342,12 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   uint8_t header[8] = {0}, region[] = {0, 0, 0, european ? 2 : 1};
   memcpy(header, disc, 6);
   header[7] = !strcmp(disc, "SJDE41");
-  if (!check_header(cache, disc, "disc/header.bin", header, sizeof header) ||
-      !check_header(cache, disc, "disc/region.bin", region, sizeof region)) {
+  struct stat source;
+  int have_image = lstat(image, &source) == 0;
+  if (have_image) {
+    jd_image_expect(header, region);
+  } else if (!check_header(cache, disc, "disc/header.bin", header, sizeof header) ||
+             !check_header(cache, disc, "disc/region.bin", region, sizeof region)) {
     fprintf(stderr, "couch: expected the matching %s revision of %s in %s\n",
             european ? "European" : "USA", disc, cache);
     return 10;
@@ -393,6 +400,6 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   if (!map_variable) map_variable = "JD2014_PROBE_MAP";
   if (map && strcmp(map, "-")) setenv(map_variable, map, 1);
   else unsetenv(map_variable);
-  char *arguments[] = {program, sys, add_on ? nand : NULL, NULL};
+  char *arguments[] = {program, have_image ? image : sys, add_on ? nand : NULL, NULL};
   return jd_runtime_main(add_on ? 3 : 2, arguments);
 }

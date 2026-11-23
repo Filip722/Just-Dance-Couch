@@ -168,7 +168,7 @@ def ubiart_song(disc, bundle):
     return (title, artist, key), parent, files
 
 
-def ubiart_catalog(disc, pack, contents, discs, jobs, coaches):
+def ubiart_catalog(disc, pack, contents, open_disc, jobs, coaches):
     previews = pack / "previews"
     previews.mkdir(exist_ok=True)
     songs, pending, base = [], [], None
@@ -189,12 +189,13 @@ def ubiart_catalog(disc, pack, contents, discs, jobs, coaches):
         audio = files.get(stem + b".wav.ckd")
         track = files[stem + b"_musictrack.tpl.ckd"]
         video = files.get(stem + b".wii.webm")
-        if not audio and parent:
-            if base is None:
-                base = song_assets(discs / disc)
-            audio = base.get(parent.lower().encode("ascii"), {}).get("audio")
-        if audio and not ((previews / f"{key}.wav").is_file() and has_preview_video(previews, key)):
-            pending.append((key, audio, track, video))
+        if not ((previews / f"{key}.wav").is_file() and has_preview_video(previews, key)):
+            if not audio and parent:
+                if base is None:
+                    base = song_assets(open_disc(disc))
+                audio = base.get(parent.lower().encode("ascii"), {}).get("audio")
+            if audio:
+                pending.append((key, audio, track, video))
         songs.append((*song, disc, pack.name, index))
     if pending:
         with ProcessPoolExecutor(max_workers=min(6, jobs)) as workers:
@@ -247,7 +248,7 @@ def lyn_catalog(disc, pack, contents, jobs, coaches):
     return songs
 
 
-def prepare_dlc(folder, cache, discs, built_discs, jobs, coaches=None):
+def prepare_dlc(folder, cache, open_disc, built_discs, jobs, coaches=None):
     wads = sorted(path for path in folder.glob("*") if path.suffix.lower() == ".wad")
     if not wads:
         return []
@@ -262,7 +263,7 @@ def prepare_dlc(folder, cache, discs, built_discs, jobs, coaches=None):
         if disc in LYN_DLC:
             edition = lyn_catalog(*pack, jobs, coaches)
         else:
-            edition = ubiart_catalog(*pack, discs, jobs, coaches)
+            edition = ubiart_catalog(*pack, open_disc, jobs, coaches)
         for song in edition:
             _, _, key, _, _, index = song
             if (disc, key) not in songs:

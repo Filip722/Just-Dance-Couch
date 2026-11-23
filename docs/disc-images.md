@@ -38,15 +38,18 @@ python3 -B pilot.py couch
 
 Without `--image`, the builder looks in `~/Wii/Just Dance` or the directory set by `JUST_DANCE_BACKUPS`. It uses the edition names above with the `.rvz` extension. For Just Dance 2020 it looks for `Just Dance 2020 (Europe) (En,Fr,De,Es,It,Nl).rvz`.
 
-## Check an extracted disc
+## Check an executable hash
 
-After a build, compare the checksum with the table. Replace `SJOE41` with your disc ID.
+The build verifies the executable automatically. To check the hash yourself, extract the image with nodtool into a temporary directory and run `sha256sum` on its `sys/main.dol` file.
 
 ```bash
-cache="${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch"
-sha256sum "$cache/discs/SJOE41/sys/main.dol"
+(
+  set -e
+  temp=$(mktemp -d)
+  trap 'rm -r -- "$temp"' EXIT
+  nodtool extract --quiet "/path/to/Just Dance 2014.rvz" "$temp/disc"
+  sha256sum "$temp/disc/sys/main.dol"
+)
 ```
-
-You can also hash `sys/main.dol` from a disc you already extracted with nodtool. Keep backups, WADs, extracted discs, and generated builds outside the checkout.
 
 [Back to the quick start](../README.md#quick-start)

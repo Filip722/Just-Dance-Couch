@@ -2,6 +2,7 @@
 """Build and run Just Dance Couch and its strict-native boot probes."""
 
 import argparse
+from contextlib import ExitStack, contextmanager
 from fcntl import LOCK_EX, flock
 import hashlib
 import os
@@ -31,6 +32,8 @@ from probe.previews import archive_entries, compress_cached_previews, prepare_pr
 ROOT = Path(__file__).resolve().parent
 REVISION = "55fb408eb1f2df75e914524dc092e69c70739ded"
 ARCHIVE_SHA256 = "12ef40254eb5460767a936be7d35b6b5f831f39b64401e7428c8a8a05b9bb7b2"
+NOD_VERSION = "2.0.0-alpha.12"
+NOD_SHA256 = "e696c90d37cbf9f1daf9edafca021c2a4006a9b9d7261af6f573f602522aa5cc"
 BTSTACK_VERSION = "1.8.3"
 BTSTACK_SHA256 = "aa164c64ce3bacc73e214562beb6b2b1e675ccb8f5d6d6764983aa58ddff311a"
 DISCS = {
@@ -176,6 +179,22 @@ def build_btstack(jobs, env, clang):
     return includes, [str(build_dir / "libcouch-btstack.a"), *flags]
 
 
+def build_nod(jobs, env):
+    name = f"nod-{NOD_VERSION}"
+    source = CACHE / name
+    prepare_archive(source, f"{name}.tar.gz",
+                    f"https://codeload.github.com/encounter/nod/tar.gz/refs/tags/v{NOD_VERSION}",
+                    NOD_SHA256, name)
+    apply_patch(source, ROOT / "deps/nod-rust-compat.patch")
+    target = CACHE / "nod-build"
+    subprocess.run([
+        "cargo", "build", "--locked", "--release", "--package", "nod-ffi", "--jobs", str(jobs),
+        "--target-dir", str(target), "--no-default-features", "--features",
+        "compress-bzip2-static,compress-lzma-static,compress-zlib-static,compress-zstd-static,threading",
+    ], cwd=source, env=env, check=True)
+    return source / "nod-ffi/include", target / "release/libnod.a"
+
+
 def prepare_disc(disc, disc_id, image, env):
     if disc.exists():
         verify_disc(disc, disc_id)
@@ -192,6 +211,33 @@ def prepare_disc(disc, disc_id, image, env):
         subprocess.run([nodtool, "extract", "--quiet", str(image), str(extracted)], check=True)
         verify_disc(extracted, disc_id)
         extracted.rename(disc)
+
+
+def record_image(disc_id, image):
+    folder = CACHE / "images"
+    folder.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=folder) as temp:
+        link = Path(temp) / disc_id
+        link.symlink_to(image.resolve(strict=True))
+        link.replace(folder / disc_id)
+
+
+@contextmanager
+def disc_files(disc_id, env, image=None):
+    cached = CACHE / "discs" / disc_id
+    if image is None and cached.is_dir():
+        verify_disc(cached, disc_id)
+        yield cached
+        return
+    if image is None:
+        link = CACHE / "images" / disc_id
+        if not link.is_file():
+            raise ValueError(f"Run python3 pilot.py build --disc {disc_id} --image PATH to register the image")
+        image = link.resolve(strict=True)
+    with tempfile.TemporaryDirectory(dir=CACHE, prefix=f"disc-{disc_id}-") as temp:
+        disc = Path(temp) / "disc"
+        prepare_disc(disc, disc_id, image, env)
+        yield disc
 
 
 def prepare_probe_adapter():
@@ -224,32 +270,30 @@ def prepare_probe_adapter():
 def build(disc_id, image, jobs):
     prepare_upstream()
     env = build_environment()
-    disc = CACHE / "discs" / disc_id
-    prepare_disc(disc, disc_id, image, env)
-    if disc_id in EMBEDDED_TITLES:
-        prepare_probe_adapter()
-    subprocess.run(
-        [sys.executable, str(RUNTIME / "tools/add_game.py"), str(disc),
-         "--no-pack", "--jobs", str(jobs), "--fifo-breakpoints"],
-        cwd=UPSTREAM, env=env, check=True,
-    )
-    if disc_id in EMBEDDED_TITLES:
-        title_build = RUNTIME / f"build-{disc_id}"
-        generated = title_build / "generated"
-        if disc_id == "SJDE41":
-            instrument_jd3(generated)
-            jd3.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
-        else:
-            instrument(generated, disc_id)
-        if disc_id == "SD2Y41":
-            if (disc / "files/WD2.bbf").is_file() and not (disc / "files/WD2.bf").is_file():
-                fix_jd2_bigfile(generated)
-        subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
+    with disc_files(disc_id, env, image) as disc:
+        if disc_id in EMBEDDED_TITLES:
+            prepare_probe_adapter()
+        subprocess.run(
+            [sys.executable, str(RUNTIME / "tools/add_game.py"), str(disc),
+             "--no-pack", "--jobs", str(jobs), "--fifo-breakpoints"],
+            cwd=UPSTREAM, env=env, check=True,
+        )
+        if disc_id in EMBEDDED_TITLES:
+            title_build = RUNTIME / f"build-{disc_id}"
+            generated = title_build / "generated"
+            if disc_id == "SJDE41":
+                instrument_jd3(generated)
+                jd3.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
+            else:
+                instrument(generated, disc_id)
+            if disc_id == "SD2Y41":
+                if (disc / "files/WD2.bbf").is_file() and not (disc / "files/WD2.bf").is_file():
+                    fix_jd2_bigfile(generated)
+            subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
+    record_image(disc_id, image)
 
 
 def boot(disc_id, fresh, song):
-    disc = CACHE / "discs" / disc_id
-    verify_disc(disc, disc_id)
     env = build_environment()
     binary = RUNTIME / "build/wii-recomp"
     library = RUNTIME / f"build-{disc_id}/title.so"
@@ -286,8 +330,8 @@ def boot(disc_id, fresh, song):
             env["JD2_PROBE_MAP"] = song
         else:
             raise ValueError("Unknown song key for this native probe")
-    os.chdir(STATE)
-    os.execve(binary, [str(binary), str(disc / "sys")], env)
+    with disc_files(disc_id, env) as disc:
+        return subprocess.run([str(binary), str(disc / "sys")], cwd=STATE, env=env).returncode
 
 
 def link_command(folder, target, env):
@@ -316,64 +360,67 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
     lyn_editions = {"SJDE41": ("JD3.bf", jd3.SONGS), "SJHE41": ("JD3SP2.bf", gh.SONGS),
                     "SJXE41": ("JD4.bf", jd4.SONGS)}
     for disc_id in titles:
-        disc = CACHE / "discs" / disc_id
-        verify_disc(disc, disc_id)
-        title_build = RUNTIME / f"build-{disc_id}"
-        if disc_id == "SJDE41":
-            collection[disc_id] = "Just Dance 3", jd3.catalog()
-            jd3.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
-            instrument_jd3(title_build / "generated")
-        elif disc_id == "SJXE41":
-            collection[disc_id] = "Just Dance 4", jd4.catalog()
-            jd4.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
-            instrument(title_build / "generated", disc_id)
-        elif disc_id == "SDNE41":
-            collection[disc_id] = "Just Dance", jd1.catalog()
-            jd1.prepare_previews(disc, CACHE / "previews" / disc_id)
-            instrument(title_build / "generated", disc_id)
-        elif disc_id == "SJHE41":
-            collection[disc_id] = "Just Dance Greatest Hits", gh.catalog()
-            gh.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
-            instrument(title_build / "generated", disc_id)
-        elif disc_id in family.FAMILY_EDITIONS:
-            songs = family.songs(disc)
-            collection[disc_id] = family.FAMILY_EDITIONS[disc_id], [song[:3] for song in songs]
-            family.prepare_previews(CACHE / "previews" / disc_id, songs, jobs)
-            instrument(title_build / "generated", disc_id)
-        elif disc_id in jd2.EDITIONS:
-            collection[disc_id] = jd2.catalog(disc_id)
-            jd2.prepare_previews(disc_id, disc, CACHE / "previews" / disc_id, jobs)
-            instrument(title_build / "generated", disc_id)
-        else:
-            if disc_id in EDITIONS:
-                songs = catalog(disc)
-                collection[disc_id] = EDITIONS[disc_id], songs
-                if not songs:
-                    raise ValueError(f"No local Classic routines for {disc_id}")
-                keys = {key.lower() for _, _, key in songs}
+        with disc_files(disc_id, env) as disc:
+            title_build = RUNTIME / f"build-{disc_id}"
+            if disc_id == "SJDE41":
+                collection[disc_id] = "Just Dance 3", jd3.catalog()
+                jd3.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
+                instrument_jd3(title_build / "generated")
+            elif disc_id == "SJXE41":
+                collection[disc_id] = "Just Dance 4", jd4.catalog()
+                jd4.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
+                instrument(title_build / "generated", disc_id)
+            elif disc_id == "SDNE41":
+                collection[disc_id] = "Just Dance", jd1.catalog()
+                jd1.prepare_previews(disc, CACHE / "previews" / disc_id)
+                instrument(title_build / "generated", disc_id)
+            elif disc_id == "SJHE41":
+                collection[disc_id] = "Just Dance Greatest Hits", gh.catalog()
+                gh.prepare_previews(disc, CACHE / "previews" / disc_id, jobs)
+                instrument(title_build / "generated", disc_id)
+            elif disc_id in family.FAMILY_EDITIONS:
+                songs = family.songs(disc)
+                collection[disc_id] = family.FAMILY_EDITIONS[disc_id], [song[:3] for song in songs]
+                family.prepare_previews(CACHE / "previews" / disc_id, songs, jobs)
+                instrument(title_build / "generated", disc_id)
+            elif disc_id in jd2.EDITIONS:
+                collection[disc_id] = jd2.catalog(disc_id)
+                jd2.prepare_previews(disc_id, disc, CACHE / "previews" / disc_id, jobs)
+                instrument(title_build / "generated", disc_id)
             else:
-                collection[disc_id] = CLASSIC_CATALOGS[disc_id]
-                keys = None
-            previews = CACHE / "previews" / disc_id
-            prepare_previews(disc, previews, jobs, keys)
-            counts = prepare_coach_art(archive_entries(disc / "files", compressed=True), previews,
-                                       (song[2] for song in collection[disc_id][1]))
-            coaches.update(((disc_id, name), count) for name, count in counts.items())
-            instrument(title_build / "generated", disc_id)
-        if disc_id in lyn_editions:
-            archive, songs = lyn_editions[disc_id]
-            counts = prepare_lyn_coach_art(dict(lyn_entries(disc / "files" / archive)),
-                                           CACHE / "previews" / disc_id,
-                                           {key: stem for key, _, _, stem, *_ in songs})
-            coaches.update(((disc_id, key), count) for key, count in counts.items())
-        subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
+                if disc_id in EDITIONS:
+                    songs = catalog(disc)
+                    collection[disc_id] = EDITIONS[disc_id], songs
+                    if not songs:
+                        raise ValueError(f"No local Classic routines for {disc_id}")
+                    keys = {key.lower() for _, _, key in songs}
+                else:
+                    collection[disc_id] = CLASSIC_CATALOGS[disc_id]
+                    keys = None
+                previews = CACHE / "previews" / disc_id
+                prepare_previews(disc, previews, jobs, keys)
+                counts = prepare_coach_art(archive_entries(disc / "files", compressed=True), previews,
+                                           (song[2] for song in collection[disc_id][1]))
+                coaches.update(((disc_id, name), count) for name, count in counts.items())
+                instrument(title_build / "generated", disc_id)
+            if disc_id in lyn_editions:
+                archive, songs = lyn_editions[disc_id]
+                counts = prepare_lyn_coach_art(dict(lyn_entries(disc / "files" / archive)),
+                                               CACHE / "previews" / disc_id,
+                                               {key: stem for key, _, _, stem, *_ in songs})
+                coaches.update(((disc_id, key), count) for key, count in counts.items())
+            subprocess.run(["ninja", "-j", str(jobs), "title.so"], cwd=title_build, env=env, check=True)
 
-    dlc_songs = dlc.prepare_dlc(dlc_directory, CACHE / "dlc", CACHE / "discs", titles, jobs, coaches)
+    with ExitStack() as stack:
+        dlc_songs = dlc.prepare_dlc(dlc_directory, CACHE / "dlc",
+                                   lambda disc: stack.enter_context(disc_files(disc, env)),
+                                   titles, jobs, coaches)
     levels = prepare_loudness(CACHE, collection, dlc_songs, jobs)
     console = RUNTIME / "build"
     subprocess.run(["ninja", "-j", str(jobs), "wii-recomp"], cwd=console, env=env, check=True)
     clang, runtime_objects, link_flags = link_command(console, "wii-recomp", env)
     bluetooth_includes, bluetooth_flags = build_btstack(jobs, env, clang)
+    nod_include, nod_library = build_nod(jobs, env)
     font_flags = shlex.split(subprocess.check_output(
         ["pkg-config", "--cflags", "--libs", "fontconfig", "freetype2"], env=env, text=True,
     ))
@@ -415,15 +462,15 @@ def build_couch(jobs, dlc_directory=BACKUPS / "DLC"):
         )
         runtime_objects.remove("obj/runtime_main.o")
         result = staging / "just-dance-couch"
-        includes = ["-I../runtime", f"-I{ROOT / 'app'}", f"-I{staging}"]
+        includes = ["-I../runtime", f"-I{ROOT / 'app'}", f"-I{staging}", f"-I{nod_include}"]
         if "SDL3_PREFIX" in env:
             includes.append(f"-I{env['SDL3_PREFIX']}/include")
         subprocess.run(
             [clang, "-O2", *includes, *bluetooth_includes, str(ROOT / "app/couch.c"),
              str(ROOT / "app/worker.c"), str(ROOT / "app/usb_remote.c"), str(ROOT / "app/song_grid.c"),
-             str(ROOT / "app/catalog.c"), str(registry),
+             str(ROOT / "app/catalog.c"), str(ROOT / "app/disc_image.c"), str(registry),
              str(main_object), *runtime_objects, *title_objects, "-o", str(result),
-             "-Wl,-z,noexecstack", *bluetooth_flags, *font_flags, *link_flags],
+             "-Wl,-z,noexecstack", str(nod_library), *bluetooth_flags, *font_flags, *link_flags],
             cwd=console, env=env, check=True,
         )
         destination = output_folder / "just-dance-couch"
@@ -448,7 +495,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "boot":
-            boot(args.disc, args.fresh, args.song)
+            sys.exit(boot(args.disc, args.fresh, args.song))
         else:
             CACHE.mkdir(parents=True, exist_ok=True)
             with (CACHE / "build.lock").open("a") as lock:
