@@ -1,10 +1,13 @@
+#include <SDL3/SDL_timer.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <math.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -20,17 +23,24 @@
 
 int jd_runtime_main(int count, char **arguments);
 
-int session_send(int socket, enum SessionMessageType type, const void *data, unsigned size) {
-  SessionMessage message = {.type = type, .size = size};
-  if (size > sizeof message.data) return 0;
+int session_send_player(int socket, enum SessionMessageType type, unsigned player,
+                        const void *data, unsigned size) {
+  SessionMessage message = {.type = type, .size = size, .player = player};
+  if (player >= REMOTE_PLAYERS || size > sizeof message.data) return 0;
   if (size) memcpy(message.data, data, size);
-  return send(socket, &message, 2 + size, MSG_DONTWAIT | MSG_NOSIGNAL) == (ssize_t)(2 + size);
+  size_t bytes = offsetof(SessionMessage, data) + size;
+  return send(socket, &message, bytes, MSG_DONTWAIT | MSG_NOSIGNAL) == (ssize_t)bytes;
+}
+
+int session_send(int socket, enum SessionMessageType type, const void *data, unsigned size) {
+  return session_send_player(socket, type, 0, data, size);
 }
 
 int session_read(int socket, SessionMessage *message, int flags) {
-  ssize_t bytes = recv(socket, message, sizeof *message, flags);
+  ssize_t bytes = recv(socket, message, sizeof *message, flags | MSG_TRUNC);
   if (bytes <= 0) return (int)bytes;
-  if (bytes < 2 || message->size > sizeof message->data || bytes != 2 + message->size) {
+  if (bytes < (ssize_t)offsetof(SessionMessage, data) || message->size > sizeof message->data ||
+      message->player >= REMOTE_PLAYERS || bytes != (ssize_t)(offsetof(SessionMessage, data) + message->size)) {
     errno = EPROTO;
     return -1;
   }
@@ -40,6 +50,9 @@ int session_read(int socket, SessionMessage *message, int flags) {
 static int bridge_socket = -1;
 static int test_input;
 static unsigned boot_rate;
+enum { LEGACY_JOIN_HOLD_MS = 330 };
+static int join_with_a;
+static atomic_uint_fast64_t join_until;
 enum { GAME_WINDOW_NORMAL, GAME_WINDOW_HIDDEN, GAME_WINDOW_READY, GAME_WINDOW_SHOWN };
 static atomic_int game_window;
 static atomic_int requested_song, boot_parked;
@@ -150,6 +163,8 @@ void jd_couch_gameplay_ready(void) {
 }
 
 void jd_couch_window_shown(void) {
+  // The LyN games use A to enroll additional dancers when play begins.
+  if (join_with_a) atomic_store(&join_until, SDL_GetTicks() + LEGACY_JOIN_HOLD_MS);
   atomic_store(&game_window, GAME_WINDOW_SHOWN);
   session_send(bridge_socket, GAME_VISIBLE, NULL, 0);
 }
@@ -165,9 +180,16 @@ int jd_couch_test_key(int escape, int enter) {
   return 1;
 }
 
-static int write_remote(void *unused, const uint8_t *report, uint32_t bytes) {
-  (void)unused;
-  return session_send(bridge_socket, REMOTE_OUTPUT, report, bytes) ? (int)bytes : -1;
+typedef struct {
+  int link, connected;
+  uint8_t address[REMOTE_ADDRESS_BYTES];
+} BridgeRemote;
+
+static BridgeRemote bridge_remotes[REMOTE_PLAYERS];
+
+static int write_remote(void *device, const uint8_t *report, uint32_t bytes) {
+  unsigned player = (BridgeRemote *)device - bridge_remotes;
+  return session_send_player(bridge_socket, REMOTE_OUTPUT, player, report, bytes) ? (int)bytes : -1;
 }
 
 static int keep_remote_open(void *unused, int guest_power_off) {
@@ -179,9 +201,23 @@ static int keep_remote_open(void *unused, int guest_power_off) {
 static void *read_remote(void *unused) {
   (void)unused;
   static const LinkOps operations = {write_remote, keep_remote_open};
-  int remote = -1;
-  SessionMessage message;
-  while (session_read(bridge_socket, &message, 0) > 0) {
+  for (unsigned i = 0; i < REMOTE_PLAYERS; i++) bridge_remotes[i].link = -1;
+  struct pollfd socket = {.fd = bridge_socket, .events = POLLIN};
+  for (;;) {
+    int retry = 0;
+    for (unsigned i = 0; i < REMOTE_PLAYERS; i++) {
+      BridgeRemote *remote = &bridge_remotes[i];
+      if (remote->connected && remote->link < 0) {
+        remote->link = link_attach_remote(i, remote->address, &operations, remote);
+        retry |= remote->link < 0;
+      }
+    }
+    // A reconnect can arrive before the guest consumes the preceding disconnect.
+    int ready = poll(&socket, 1, retry ? 16 : -1);
+    if (ready == 0 || (ready < 0 && errno == EINTR)) continue;
+    SessionMessage message;
+    if (ready < 0 || session_read(bridge_socket, &message, 0) <= 0) break;
+    BridgeRemote *remote = &bridge_remotes[message.player];
     switch (message.type) {
       case SELECT_SONG:
         if (message.size == 1 && !add_on && edition && message.data[0] < edition->count) {
@@ -192,21 +228,33 @@ static void *read_remote(void *unused) {
         }
         break;
       case REMOTE_CONNECTED:
-        if (remote >= 0) link_lost(remote);
-        if (message.size == 6) remote = link_attach(message.data, "Nintendo RVL-CNT-01", &operations, NULL);
+        if (message.size != sizeof remote->address) break;
+        if (remote->connected && !memcmp(remote->address, message.data, sizeof remote->address)) break;
+        if (remote->link >= 0) link_lost(remote->link);
+        remote->link = -1;
+        remote->connected = 1;
+        memcpy(remote->address, message.data, sizeof remote->address);
         break;
       case REMOTE_DISCONNECTED:
-        if (remote >= 0) link_lost(remote);
-        remote = -1;
+        if (remote->link >= 0) link_lost(remote->link);
+        remote->link = -1;
+        remote->connected = 0;
         break;
-      case REMOTE_INPUT:
-        if (remote >= 0 && message.size) link_input(remote, message.data, message.size);
+      case REMOTE_INPUT: {
+        if (remote->link < 0 || !message.size) break;
+        uint64_t deadline = atomic_load(&join_until);
+        if (deadline && message.player && message.size >= 3 &&
+            message.data[0] >= 0x30 && message.data[0] <= 0x3f && SDL_GetTicks() < deadline)
+          message.data[2] |= BUTTON_A >> 8;
+        link_input(remote->link, message.data, message.size);
         break;
+      }
       default:
         break;
     }
   }
-  if (remote >= 0) link_lost(remote);
+  for (unsigned i = 0; i < REMOTE_PLAYERS; i++)
+    if (bridge_remotes[i].link >= 0) link_lost(bridge_remotes[i].link);
   pthread_mutex_lock(&selection_lock);
   bridge_closed = 1;
   pthread_cond_signal(&selection_ready);
@@ -304,8 +352,10 @@ int run_worker(char *program, const char *disc, const char *map, int socket, int
   const char *map_variable = NULL;
   if (!strcmp(disc, "SDNE41")) map_variable = "JD1_PROBE_MAP";
   else if (!strcmp(disc, "SD2Y41") || !strcmp(disc, "SJ9E41") ||
-           !strcmp(disc, "SJHE41") || !strcmp(disc, "SJDE41") || !strcmp(disc, "SJXE41"))
+           !strcmp(disc, "SJHE41") || !strcmp(disc, "SJDE41") || !strcmp(disc, "SJXE41")) {
     map_variable = "JD2_PROBE_MAP";
+    join_with_a = !simulated;
+  }
   if (socket >= 0) {
     // The direct loaders and the older on-disc menus tolerate different boot rates.
     boot_rate = map_variable ? 6 : 3;

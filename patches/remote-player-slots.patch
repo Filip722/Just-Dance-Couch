@@ -1,0 +1,94 @@
+--- a/recomp/runtime/remote_link.c
++++ b/recomp/runtime/remote_link.c
+@@ -105,17 +105,19 @@
+ }
+
+ // The device is known: give it a slot, and it calls the console.
+-static void take_slot(int id) {
++static int take_slot(int id, int requested_slot) {
+   Entry *entry = &entries[id];
+   pthread_mutex_lock(&lock);
+-  int slot = link_choose_slot(entry->address, entry->kind);
++  int slot = requested_slot;
++  if (slot < 0) slot = link_choose_slot(entry->address, entry->kind);
++  else if (atomic_load(&slot_entry[slot]) >= 0) slot = -1;
+   if (slot >= 0) {
+     entry->slot = slot;
+     atomic_store(&slot_lost[slot], 0);
+     atomic_store(&entry->state, LINKED);
+     atomic_store(&entry->wake, 1);
+     atomic_store(&slot_entry[slot], id);
+-    pin_slot(entry->address, slot);
++    if (requested_slot < 0) pin_slot(entry->address, slot);
+   }
+   pthread_mutex_unlock(&lock);
+   char text[18];
+@@ -126,6 +128,7 @@
+   } else {
+     fprintf(stderr, "remotes: %s %s is player %d\n", entry->kind == LINK_BOARD ? "the board" : "remote", text, slot + 1);
+   }
++  return slot;
+ }
+
+ // --- Asking a device what it is ---
+@@ -139,7 +142,7 @@
+   int expected = PROBING;
+   if (!atomic_compare_exchange_strong(&entries[id].state, &expected, DECIDING)) return;  // Decided already.
+   entries[id].kind = kind;
+-  take_slot(id);
++  take_slot(id, -1);
+ }
+
+ // The answers, in order: the attachment initialised, unlocked, then its two ID bytes.
+@@ -161,11 +164,11 @@
+   }
+ }
+
+-int link_attach(const uint8_t address[6], const char *name, const LinkOps *ops, void *device) {
++static int allocate_link(const uint8_t address[6], const LinkOps *ops, void *device) {
+   int id = -1;
+   for (int i = 0; i < ENTRIES && id < 0; i++) {
+     int expected = FREE;
+-    if (atomic_compare_exchange_strong(&entries[i].state, &expected, PROBING)) id = i;
++    if (atomic_compare_exchange_strong(&entries[i].state, &expected, DECIDING)) id = i;
+   }
+   if (id < 0) return -1;
+   Entry *entry = &entries[id];
+@@ -178,10 +181,26 @@
+   atomic_store(&entry->head, 0);
+   atomic_store(&entry->tail, 0);
+   atomic_store(&entry->wake, 0);
++  return id;
++}
++
++int link_attach(const uint8_t address[6], const char *name, const LinkOps *ops, void *device) {
++  int id = allocate_link(address, ops, device);
++  if (id < 0) return -1;
++  Entry *entry = &entries[id];
++  atomic_store(&entry->state, PROBING);
+   if (name && strstr(name, "RVL-WBC")) decide(id, LINK_BOARD);
+   else if (name && strstr(name, "RVL-CNT")) decide(id, LINK_REMOTE);
+   else probe_write(entry, 0x04a400f0, 0x55);
+   return id;
++}
++
++int link_attach_remote(int slot, const uint8_t address[6], const LinkOps *ops, void *device) {
++  if (slot < 0 || slot >= BLUETOOTH_BOARD || link_linked(slot)) return -1;
++  int id = allocate_link(address, ops, device);
++  if (id < 0) return -1;
++  entries[id].kind = LINK_REMOTE;
++  return take_slot(id, slot) < 0 ? -1 : id;
+ }
+
+ // --- Reports ---
+--- a/recomp/runtime/remote_link.h
++++ b/recomp/runtime/remote_link.h
+@@ -52,6 +52,8 @@
+ // link_attach returns the device's id for the other two, or -1 if too many are linked.
+ // A name such as "Nintendo RVL-WBC-01" says what it is; with none, the core asks it.
+ int link_attach(const uint8_t address[6], const char *name, const LinkOps *ops, void *device);
++// A console frontend may assign an explicit Wii Remote slot through its own transport.
++int link_attach_remote(int slot, const uint8_t address[6], const LinkOps *ops, void *device);
+ void link_input(int id, const uint8_t *report, uint32_t bytes);  // From the device, starting with its ID.
+ void link_lost(int id);
+ const char *link_name_of(int id);  // "Nintendo RVL-CNT-01" or "-WBC-01" once known, else "".

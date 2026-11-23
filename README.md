@@ -43,7 +43,9 @@ couch="${XDG_CACHE_HOME:-$HOME/.cache}/just-dance-couch/bin/just-dance-couch"
 "$couch" --usb-wii
 ```
 
-For first-time pairing, press the red **SYNC** button inside the Wii Remote's battery compartment. The Player 1 light indicates a ready connection. On later launches, wake the paired remote with a button press. Press **Escape** in the picker to exit and release the module.
+Connect up to four Wii Remotes in the picker. For first-time pairing, press the red **SYNC** button inside each remote's battery compartment. Wait for its numbered light to go solid before waking or syncing the next one. On later launches, wake the paired remotes with a button press.
+
+Players get the lowest free number as they connect. Other players keep their numbers when a remote disconnects. The lowest-numbered connected remote controls the picker and can return to it during a dance. If Player 1 disconnects, wake or reconnect a remote to fill that slot before starting another song. Press **Escape** in the picker to exit and release the module.
 
 Use `"$couch" --loopback` to check the picker and launch flow with a keyboard. Running `"$couch"` without flags uses a BlueZ-paired Wii Remote through a hidraw device with read and write permissions and a driver that leaves HID reporting to userspace.
 

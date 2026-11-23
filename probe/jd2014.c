@@ -206,9 +206,9 @@ void jd2014_probe_lobby_update(void) {
     known_count = (int)connected;
     fprintf(stderr, "probe: original lobby sees %u connected players\n", connected);
   }
-  if (connected != 1) return;
+  if (!connected) return;
 
-  // The normal Start action lets the game choose a coach for the connected player.
+  // The normal Start action lets the game choose coaches for the connected players.
   launch_requested = 1;
   guest_call(LOBBY_PREPARE_LAUNCH, ready_lobby);
   fprintf(stderr, "probe: selected the original lobby Start action at %.0f ms\n", (double)time_base() / 60750);

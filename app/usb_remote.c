@@ -25,26 +25,35 @@
 enum {
   NINTENDO = 0x057e, WII_MODULE = 0x0305, HID_INPUT = 0xa1, HID_OUTPUT = 0xa2,
   WII_REMOTE_CLASS = 0x002504, WII_REMOTE_PLUS_CLASS = 0x000508,
-  REMOTE_TAG = 0x57494931, REPORT_MTU = 64, OUTPUT_QUEUE = 32,
+  REPORT_MTU = 64, OUTPUT_QUEUE = 32, REQUEST_STATUS = 0x15, INPUT_STATUS = 0x20,
   INQUIRY_UNIT_MS = 1280, PAIR_INQUIRY_UNITS = 4,
   RETRY_MS = 1000, BONDED_LISTEN_MS = PAIR_INQUIRY_UNITS * INQUIRY_UNIT_MS,
+  SETUP_TIMEOUT_MS = 12000, STATUS_TIMEOUT_MS = 1800,
+  PERIPHERAL_TYPE_MASK = 0x001f3c,
 };
+
+typedef struct {
+  bd_addr_t address;
+  hci_con_handle_t handle;
+  uint16_t control, interrupt;
+  int control_open, interrupt_open, player, outgoing, alternate_pin, pin_requested;
+  SessionMessage queue[OUTPUT_QUEUE];
+  unsigned head, count;
+  btstack_timer_source_t timeout;
+} WiiRemote;
 
 /* All Bluetooth state is used by the BTstack thread only. */
 static struct {
-  int socket, working, stopping, inquiry, naming, connected, outgoing, trace;
-  unsigned inquiry_results;
-  uint16_t control, interrupt;
-  int control_open, interrupt_open;
-  bd_addr_t candidate, peer, bonded, pin;
+  int socket, working, stopping, inquiry, naming, trace, discovery, general_inquiry;
+  bd_addr_t candidate, retry_address, pin;
+  uint32_t candidate_class;
   uint16_t clock_offset;
   uint8_t page_mode;
   int candidate_named;
   btstack_tlv_posix_t store;
   const btstack_tlv_t *tlv;
   char key_path[PATH_MAX];
-  SessionMessage queue[OUTPUT_QUEUE];
-  unsigned head, count;
+  WiiRemote remotes[REMOTE_PLAYERS];
   btstack_timer_source_t scan_timer;
 } usb;
 
@@ -53,12 +62,53 @@ static int address_set(const bd_addr_t address) {
   return memcmp(address, zero, sizeof zero) != 0;
 }
 
-static int is_remote(const void *name, unsigned size) {
-  static const char remote[] = "Nintendo RVL-CNT-01";
-  static const char remote_plus[] = "Nintendo RVL-CNT-01-TR";
-  size = strnlen(name, size);
-  return (size == sizeof remote - 1 && !memcmp(name, remote, size)) ||
-         (size == sizeof remote_plus - 1 && !memcmp(name, remote_plus, size));
+static int is_remote(const void *name, unsigned size, uint32_t device_class) {
+  char text[249];
+  if (size >= sizeof text) size = sizeof text - 1;
+  memcpy(text, name, size);
+  text[size] = 0;
+  if (strcasestr(text, "RVL-WBC") || strcasestr(text, "RVL-CNT-01-UC") ||
+      strcasestr(text, "Balance Board") || strcasestr(text, "Wii U Pro")) return 0;
+  return strcasestr(text, "RVL-CNT-01") || strcasestr(text, "Wii Remote") ||
+         strcasestr(text, "Wiimote") ||
+         device_class == WII_REMOTE_CLASS || device_class == WII_REMOTE_PLUS_CLASS;
+}
+
+static int has_bond(bd_addr_t address) {
+  link_key_t key;
+  link_key_type_t type;
+  int found = gap_get_link_key_for_bd_addr(address, key, &type);
+  explicit_bzero(key, sizeof key);
+  return found;
+}
+
+static WiiRemote *by_address(const bd_addr_t address) {
+  for (unsigned i = 0; i < REMOTE_PLAYERS; i++)
+    if (address_set(usb.remotes[i].address) &&
+        !memcmp(usb.remotes[i].address, address, REMOTE_ADDRESS_BYTES)) return &usb.remotes[i];
+  return NULL;
+}
+
+static WiiRemote *by_channel(uint16_t cid) {
+  for (unsigned i = 0; cid && i < REMOTE_PLAYERS; i++)
+    if (usb.remotes[i].control == cid || usb.remotes[i].interrupt == cid) return &usb.remotes[i];
+  return NULL;
+}
+
+static WiiRemote *by_player(int player) {
+  for (unsigned i = 0; i < REMOTE_PLAYERS; i++)
+    if (address_set(usb.remotes[i].address) && usb.remotes[i].player == player) return &usb.remotes[i];
+  return NULL;
+}
+
+static WiiRemote *free_peer(void) {
+  for (unsigned i = 0; i < REMOTE_PLAYERS; i++)
+    if (!address_set(usb.remotes[i].address)) return &usb.remotes[i];
+  return NULL;
+}
+
+static int can_discover(void) {
+  return usb.discovery && !usb.stopping && free_peer() && !by_player(-1);
 }
 
 static int select_module(void) {
@@ -102,28 +152,29 @@ static int open_keys(void) {
   if (!ok) return 0;
   usb.tlv = btstack_tlv_posix_init_instance(&usb.store, usb.key_path);
   hci_set_link_key_db(btstack_link_key_db_tlv_get_instance(usb.tlv, &usb.store));
-  if (usb.tlv->get_tag(&usb.store, REMOTE_TAG, usb.bonded, sizeof usb.bonded) != sizeof usb.bonded)
-    memset(usb.bonded, 0, sizeof usb.bonded);
-  if (usb.trace && address_set(usb.bonded)) {
-    link_key_t key;
-    link_key_type_t type;
-    int found = gap_get_link_key_for_bd_addr(usb.bonded, key, &type);
-    explicit_bzero(key, sizeof key);
-    fprintf(stderr, "usb-wii: saved Wii Remote address with %s\n", found ? "a link key" : "no link key");
-  }
   return 1;
 }
 
+static void dial(const bd_addr_t address, int alternate_pin);
+
 static void scan(btstack_timer_source_t *timer) {
   (void)timer;
-  if (usb.stopping || usb.inquiry || usb.naming || address_set(usb.peer)) return;
+  if (!can_discover() || usb.inquiry || usb.naming) return;
+  if (address_set(usb.retry_address)) {
+    bd_addr_t address;
+    memcpy(address, usb.retry_address, sizeof address);
+    memset(usb.retry_address, 0, sizeof usb.retry_address);
+    dial(address, 1);
+    return;
+  }
   memset(usb.candidate, 0, sizeof usb.candidate);
   usb.candidate_named = 0;
-  usb.inquiry_results = 0;
+  gap_inquiry_set_lap(usb.general_inquiry ? GAP_IAC_GENERAL_INQUIRY : GAP_IAC_LIMITED_INQUIRY);
   int status = gap_inquiry_start(PAIR_INQUIRY_UNITS);
   usb.inquiry = status == ERROR_CODE_SUCCESS;
-  if (usb.trace && status) fprintf(stderr, "usb-wii: inquiry start failed (0x%02x)\n", status);
-  if (!usb.inquiry) {
+  if (usb.trace)
+    fprintf(stderr, "usb-wii: %s inquiry start (0x%02x)\n", usb.general_inquiry ? "general" : "limited", status);
+  if (status) {
     btstack_run_loop_set_timer(&usb.scan_timer, RETRY_MS);
     btstack_run_loop_add_timer(&usb.scan_timer);
   }
@@ -131,39 +182,105 @@ static void scan(btstack_timer_source_t *timer) {
 
 static void rescan(void) {
   btstack_run_loop_remove_timer(&usb.scan_timer);
-  if (usb.stopping) return;
-  btstack_run_loop_set_timer(&usb.scan_timer, address_set(usb.bonded) ? BONDED_LISTEN_MS : RETRY_MS);
+  if (!can_discover()) return;
+  btstack_link_key_iterator_t iterator;
+  int paired = 0;
+  if (gap_link_key_iterator_init(&iterator)) {
+    bd_addr_t address;
+    link_key_t key;
+    link_key_type_t type;
+    paired = gap_link_key_iterator_get_next(&iterator, address, key, &type);
+    explicit_bzero(key, sizeof key);
+    gap_link_key_iterator_done(&iterator);
+  }
+  btstack_run_loop_set_timer(&usb.scan_timer,
+                            paired && !address_set(usb.retry_address) ? BONDED_LISTEN_MS : RETRY_MS);
   btstack_run_loop_add_timer(&usb.scan_timer);
 }
 
-static void lost(void) {
-  if (usb.connected) {
-    session_send(usb.socket, REMOTE_DISCONNECTED, NULL, 0);
-    fprintf(stderr, "usb-wii: remote disconnected\n");
+static void lost(WiiRemote *remote) {
+  if (remote->player >= 0) {
+    session_send_player(usb.socket, REMOTE_DISCONNECTED, remote->player, NULL, 0);
+    fprintf(stderr, "usb-wii: Player %d disconnected\n", remote->player + 1);
   }
-  usb.connected = usb.control_open = usb.interrupt_open = usb.outgoing = 0;
-  usb.control = usb.interrupt = 0;
-  usb.head = usb.count = 0;
-  memset(usb.peer, 0, sizeof usb.peer);
+  btstack_run_loop_remove_timer(&remote->timeout);
+  memset(remote, 0, sizeof *remote);
   rescan();
 }
 
-static void send_reports(void) {
-  while (usb.count && usb.connected && l2cap_can_send_packet_now(usb.interrupt)) {
-    SessionMessage *report = &usb.queue[usb.head];
+static void disconnect_remote(WiiRemote *remote) {
+  hci_con_handle_t handle = remote->handle;
+  lost(remote);
+  if (handle != HCI_CON_HANDLE_INVALID) gap_disconnect(handle);
+}
+
+static void setup_timed_out(btstack_timer_source_t *timer) {
+  WiiRemote *remote = btstack_run_loop_get_timer_context(timer);
+  fprintf(stderr, "usb-wii: remote setup timed out\n");
+  disconnect_remote(remote);
+}
+
+static void set_timeout(WiiRemote *remote, unsigned milliseconds) {
+  btstack_run_loop_remove_timer(&remote->timeout);
+  btstack_run_loop_set_timer(&remote->timeout, milliseconds);
+  btstack_run_loop_add_timer(&remote->timeout);
+}
+
+static WiiRemote *new_peer(const bd_addr_t address) {
+  WiiRemote *remote = free_peer();
+  if (!remote) return NULL;
+  memcpy(remote->address, address, sizeof remote->address);
+  remote->player = -1;
+  remote->handle = HCI_CON_HANDLE_INVALID;
+  btstack_run_loop_set_timer_handler(&remote->timeout, setup_timed_out);
+  btstack_run_loop_set_timer_context(&remote->timeout, remote);
+  set_timeout(remote, SETUP_TIMEOUT_MS);
+  return remote;
+}
+
+static void send_reports(WiiRemote *remote) {
+  while (remote->count && remote->interrupt_open && l2cap_can_send_packet_now(remote->interrupt)) {
+    SessionMessage *report = &remote->queue[remote->head];
     uint8_t frame[1 + sizeof report->data] = {HID_OUTPUT};
     memcpy(frame + 1, report->data, report->size);
-    if (l2cap_send(usb.interrupt, frame, 1 + report->size) != ERROR_CODE_SUCCESS) break;
-    usb.head = (usb.head + 1) % OUTPUT_QUEUE;
-    usb.count--;
+    if (l2cap_send(remote->interrupt, frame, 1 + report->size) != ERROR_CODE_SUCCESS) break;
+    remote->head = (remote->head + 1) % OUTPUT_QUEUE;
+    remote->count--;
   }
-  if (usb.count && usb.connected) l2cap_request_can_send_now_event(usb.interrupt);
+  if (remote->count && remote->interrupt_open) l2cap_request_can_send_now_event(remote->interrupt);
+}
+
+static void queue_report(WiiRemote *remote, const uint8_t *data, unsigned size) {
+  if (remote->count == OUTPUT_QUEUE) {
+    fprintf(stderr, "usb-wii: output queue full for Player %d\n", remote->player + 1);
+    return;
+  }
+  SessionMessage *report = &remote->queue[(remote->head + remote->count++) % OUTPUT_QUEUE];
+  report->size = size;
+  memcpy(report->data, data, size);
+  send_reports(remote);
+}
+
+static void ready_remote(WiiRemote *remote) {
+  for (int player = 0; player < REMOTE_PLAYERS; player++) {
+    if (by_player(player)) continue;
+    remote->player = player;
+    btstack_run_loop_remove_timer(&remote->timeout);
+    session_send_player(usb.socket, REMOTE_CONNECTED, player, remote->address, sizeof remote->address);
+    fprintf(stderr, "usb-wii: Wii Remote connected as Player %d\n", player + 1);
+    rescan();
+    return;
+  }
 }
 
 static void channels(uint8_t type, uint16_t channel, uint8_t *packet, uint16_t size) {
-  if (type == L2CAP_DATA_PACKET && usb.connected && channel == usb.interrupt &&
-      size > 1 && packet[0] == HID_INPUT) {
-    session_send(usb.socket, REMOTE_INPUT, packet + 1, size - 1);
+  if (type == L2CAP_DATA_PACKET) {
+    WiiRemote *remote = by_channel(channel);
+    if (!remote || channel != remote->interrupt || size < 2 || packet[0] != HID_INPUT) return;
+    if (remote->player < 0 && remote->control_open && remote->interrupt_open &&
+        size >= 7 && packet[1] == INPUT_STATUS) ready_remote(remote);
+    if (remote->player >= 0)
+      session_send_player(usb.socket, REMOTE_INPUT, remote->player, packet + 1, size - 1);
     return;
   }
   if (type != HCI_EVENT_PACKET) return;
@@ -171,72 +288,79 @@ static void channels(uint8_t type, uint16_t channel, uint8_t *packet, uint16_t s
     case L2CAP_EVENT_INCOMING_CONNECTION: {
       bd_addr_t address;
       l2cap_event_incoming_connection_get_address(packet, address);
-      if (usb.trace)
-        fprintf(stderr, "usb-wii: incoming HID channel (PSM 0x%04x)\n",
-                l2cap_event_incoming_connection_get_psm(packet));
       uint16_t cid = l2cap_event_incoming_connection_get_local_cid(packet);
-      uint16_t *slot = l2cap_event_incoming_connection_get_psm(packet) == PSM_HID_CONTROL
-                         ? &usb.control : &usb.interrupt;
-      if (usb.stopping || !address_set(usb.bonded) || memcmp(address, usb.bonded, sizeof address) ||
-          (address_set(usb.peer) && memcmp(address, usb.peer, sizeof address)) || *slot) {
+      uint16_t psm = l2cap_event_incoming_connection_get_psm(packet);
+      if (usb.trace) fprintf(stderr, "usb-wii: incoming HID channel (PSM 0x%04x)\n", psm);
+      WiiRemote *remote = by_address(address);
+      if (!usb.stopping && !remote && has_bond(address)) remote = new_peer(address);
+      if (usb.stopping || !remote) {
         l2cap_decline_connection(cid);
         return;
       }
-      memcpy(usb.peer, address, sizeof address);
-      *slot = cid;
+      uint16_t *channel_cid = psm == PSM_HID_CONTROL ? &remote->control : &remote->interrupt;
+      if (*channel_cid) {
+        l2cap_decline_connection(cid);
+        return;
+      }
+      remote->handle = l2cap_event_incoming_connection_get_handle(packet);
+      *channel_cid = cid;
       l2cap_accept_connection(cid);
       break;
     }
     case L2CAP_EVENT_CHANNEL_OPENED: {
       uint16_t cid = l2cap_event_channel_opened_get_local_cid(packet);
-      if (cid != usb.control && cid != usb.interrupt) break;
+      WiiRemote *remote = by_channel(cid);
+      if (!remote) break;
       hci_con_handle_t handle = l2cap_event_channel_opened_get_handle(packet);
-      if (l2cap_event_channel_opened_get_status(packet)) {
-        fprintf(stderr, "usb-wii: HID channel failed (0x%02x). Press SYNC to pair again\n",
-                l2cap_event_channel_opened_get_status(packet));
-        if (handle != HCI_CON_HANDLE_INVALID) gap_disconnect(handle);
-        lost();
+      if (handle != HCI_CON_HANDLE_INVALID) remote->handle = handle;
+      uint8_t status = l2cap_event_channel_opened_get_status(packet);
+      if (status) {
+        fprintf(stderr, "usb-wii: HID channel failed (0x%02x). Press SYNC to pair again\n", status);
+        disconnect_remote(remote);
         break;
       }
-      if (cid == usb.control) {
-        usb.control_open = 1;
-        if (usb.outgoing && !usb.interrupt &&
-            l2cap_create_channel(channels, usb.peer, PSM_HID_INTERRUPT, REPORT_MTU, &usb.interrupt)) {
-          gap_disconnect(handle);
-          lost();
+      if (cid == remote->control) {
+        remote->control_open = 1;
+        if (remote->outgoing && !remote->interrupt &&
+            l2cap_create_channel(channels, remote->address, PSM_HID_INTERRUPT, REPORT_MTU, &remote->interrupt)) {
+          disconnect_remote(remote);
           break;
         }
-      } else usb.interrupt_open = 1;
-      if (!usb.connected && usb.control_open && usb.interrupt_open) {
-        usb.connected = 1;
-        memcpy(usb.bonded, usb.peer, sizeof usb.bonded);
-        usb.tlv->store_tag(&usb.store, REMOTE_TAG, usb.bonded, sizeof usb.bonded);
-        session_send(usb.socket, REMOTE_CONNECTED, usb.peer, sizeof usb.peer);
-        fprintf(stderr, "usb-wii: Wii Remote connected\n");
+      } else remote->interrupt_open = 1;
+      if (remote->control_open && remote->interrupt_open && remote->player < 0) {
+        const uint8_t status_request[] = {REQUEST_STATUS, 0};
+        set_timeout(remote, STATUS_TIMEOUT_MS);
+        queue_report(remote, status_request, sizeof status_request);
       }
       break;
     }
     case L2CAP_EVENT_CHANNEL_CLOSED: {
-      uint16_t cid = l2cap_event_channel_closed_get_local_cid(packet);
-      if (cid == usb.control || cid == usb.interrupt) {
-        uint16_t other = cid == usb.control ? usb.interrupt : usb.control;
-        lost();
-        if (other) l2cap_disconnect(other);
-      }
+      WiiRemote *remote = by_channel(l2cap_event_channel_closed_get_local_cid(packet));
+      if (remote) disconnect_remote(remote);
       break;
     }
-    case L2CAP_EVENT_CAN_SEND_NOW:
-      if (l2cap_event_can_send_now_get_local_cid(packet) == usb.interrupt) send_reports();
+    case L2CAP_EVENT_CAN_SEND_NOW: {
+      WiiRemote *remote = by_channel(l2cap_event_can_send_now_get_local_cid(packet));
+      if (remote) send_reports(remote);
       break;
+    }
   }
 }
 
-static void dial(void) {
-  if (address_set(usb.peer)) return;
-  memcpy(usb.peer, usb.candidate, sizeof usb.peer);
-  usb.outgoing = 1;
-  fprintf(stderr, "usb-wii: opening Wii Remote HID channels\n");
-  if (l2cap_create_channel(channels, usb.peer, PSM_HID_CONTROL, REPORT_MTU, &usb.control)) lost();
+static void dial(const bd_addr_t address, int alternate_pin) {
+  WiiRemote *remote = by_address(address);
+  if (!remote) remote = new_peer(address);
+  if (!remote || remote->control || remote->interrupt) return;
+  remote->outgoing = 1;
+  remote->alternate_pin = alternate_pin;
+  fprintf(stderr, "usb-wii: opening Wii Remote HID channels%s\n", alternate_pin ? " with alternate PIN" : "");
+  if (l2cap_create_channel(channels, remote->address, PSM_HID_CONTROL, REPORT_MTU, &remote->control))
+    disconnect_remote(remote);
+}
+
+static int accept_connection(bd_addr_t address, hci_link_type_t type) {
+  return !usb.stopping && type == HCI_LINK_TYPE_ACL &&
+         (by_address(address) || (free_peer() && has_bond(address)));
 }
 
 static void controller_event(uint8_t type, uint16_t channel, uint8_t *packet, uint16_t size) {
@@ -259,104 +383,118 @@ static void controller_event(uint8_t type, uint16_t channel, uint8_t *packet, ui
       }
       break;
     case GAP_EVENT_INQUIRY_RESULT: {
-      usb.inquiry_results++;
-      if (address_set(usb.peer)) break;
+      if (!can_discover() || usb.candidate_named) break;
+      bd_addr_t address;
+      gap_event_inquiry_result_get_bd_addr(packet, address);
+      if (by_address(address)) break;
       uint32_t device_class = gap_event_inquiry_result_get_class_of_device(packet);
       int named = gap_event_inquiry_result_get_name_available(packet);
-      if (named && !is_remote(gap_event_inquiry_result_get_name(packet),
-                              gap_event_inquiry_result_get_name_len(packet))) break;
-      if (!named && device_class != WII_REMOTE_CLASS && device_class != WII_REMOTE_PLUS_CLASS) break;
-      if (address_set(usb.candidate) && !named) break;
-      gap_event_inquiry_result_get_bd_addr(packet, usb.candidate);
+      const uint8_t *name = named ? gap_event_inquiry_result_get_name(packet) : (const uint8_t *)"";
+      unsigned length = named ? gap_event_inquiry_result_get_name_len(packet) : 0;
+      if (usb.trace)
+        fprintf(stderr, "usb-wii: discovery class %06x, name %.*s\n", device_class, (int)length, name);
+      uint32_t peripheral = device_class & PERIPHERAL_TYPE_MASK;
+      int plausible = named ? is_remote(name, length, device_class)
+                            : peripheral == (WII_REMOTE_CLASS & PERIPHERAL_TYPE_MASK) ||
+                              peripheral == WII_REMOTE_PLUS_CLASS;
+      if (!plausible || (address_set(usb.candidate) && !named)) break;
+      memcpy(usb.candidate, address, sizeof address);
+      usb.candidate_class = device_class;
       usb.clock_offset = gap_event_inquiry_result_get_clock_offset(packet);
       usb.page_mode = gap_event_inquiry_result_get_page_scan_repetition_mode(packet);
       usb.candidate_named = named;
-      fprintf(stderr, "usb-wii: found a Wii Remote candidate%s\n", named ? " by name" : " by device class");
       if (named) gap_inquiry_stop();
       break;
     }
     case GAP_EVENT_INQUIRY_COMPLETE:
-      if (usb.trace)
-        fprintf(stderr, "usb-wii: limited inquiry finished (0x%02x, %u responses)\n",
-                gap_event_inquiry_complete_get_status(packet), usb.inquiry_results);
       usb.inquiry = 0;
-      if (usb.stopping || address_set(usb.peer)) break;
-      if (usb.candidate_named) dial();
+      if (!can_discover()) break;
+      if (usb.candidate_named) dial(usb.candidate, 0);
       else if (address_set(usb.candidate)) {
         usb.naming = gap_remote_name_request(usb.candidate, usb.page_mode, usb.clock_offset | 0x8000)
                      == ERROR_CODE_SUCCESS;
         if (!usb.naming) rescan();
-      } else rescan();
-      break;
-    case HCI_EVENT_REMOTE_NAME_REQUEST_COMPLETE:
-      if (!usb.naming) break;
-      usb.naming = 0;
-      if (!usb.stopping && size > 9 && !hci_event_remote_name_request_complete_get_status(packet) &&
-          is_remote(hci_event_remote_name_request_complete_get_remote_name(packet), size - 9)) dial();
-      else {
-        if (!usb.stopping) fprintf(stderr, "usb-wii: could not confirm a Wii Remote name\n");
+      } else {
+        // Some third-party remotes advertise only in a general inquiry.
+        usb.general_inquiry = !usb.general_inquiry;
         rescan();
       }
       break;
+    case HCI_EVENT_REMOTE_NAME_REQUEST_COMPLETE: {
+      bd_addr_t address;
+      hci_event_remote_name_request_complete_get_bd_addr(packet, address);
+      if (!usb.naming || memcmp(address, usb.candidate, sizeof address)) break;
+      usb.naming = 0;
+      int named = size > 9 && !hci_event_remote_name_request_complete_get_status(packet);
+      if (usb.trace && named) fprintf(stderr, "usb-wii: remote name %.*s\n", size - 9,
+                                      hci_event_remote_name_request_complete_get_remote_name(packet));
+      if (can_discover() && named &&
+          is_remote(hci_event_remote_name_request_complete_get_remote_name(packet), size - 9, usb.candidate_class))
+        dial(address, 0);
+      else rescan();
+      break;
+    }
     case HCI_EVENT_CONNECTION_REQUEST: {
       bd_addr_t address;
       hci_event_connection_request_get_bd_addr(packet, address);
-      if (hci_event_connection_request_get_link_type(packet) == HCI_LINK_TYPE_ACL &&
-          address_set(usb.bonded) && !memcmp(address, usb.bonded, sizeof address)) {
-        if (usb.trace) fprintf(stderr, "usb-wii: saved Wii Remote requested reconnection\n");
-        // Give the incoming ACL and HID setup time before the next pairing inquiry.
+      if (hci_event_connection_request_get_link_type(packet) == HCI_LINK_TYPE_ACL && has_bond(address)) {
+        // Leave room for the saved remote's incoming ACL and HID setup.
         rescan();
         if (usb.inquiry && !address_set(usb.candidate)) gap_inquiry_stop();
       }
       break;
     }
-    case HCI_EVENT_COMMAND_STATUS:
-      if (usb.trace &&
-          hci_event_command_status_get_command_opcode(packet) == HCI_OPCODE_HCI_ACCEPT_CONNECTION_REQUEST)
-        fprintf(stderr, "usb-wii: incoming ACL accept (0x%02x)\n",
-                hci_event_command_status_get_status(packet));
-      break;
     case HCI_EVENT_CONNECTION_COMPLETE: {
-      int status = hci_event_connection_complete_get_status(packet);
+      uint8_t status = hci_event_connection_complete_get_status(packet);
       if (usb.trace) fprintf(stderr, "usb-wii: ACL connection complete (0x%02x)\n", status);
-      if (status || usb.stopping || usb.outgoing ||
-          hci_event_connection_complete_get_link_type(packet) != HCI_LINK_TYPE_ACL) break;
+      if (status || usb.stopping || hci_event_connection_complete_get_link_type(packet) != HCI_LINK_TYPE_ACL) break;
       bd_addr_t address;
       hci_event_connection_complete_get_bd_addr(packet, address);
-      if (address_set(usb.bonded) && !memcmp(address, usb.bonded, sizeof address)) {
-        // Authenticate the saved remote before waiting for it to open HID.
-        gap_request_security_level(hci_event_connection_complete_get_connection_handle(packet), LEVEL_2);
+      WiiRemote *remote = by_address(address);
+      hci_con_handle_t handle = hci_event_connection_complete_get_connection_handle(packet);
+      if (!remote && has_bond(address)) remote = new_peer(address);
+      if (!remote) {
+        gap_disconnect(handle);
+        break;
+      }
+      remote->handle = handle;
+      if (!remote->outgoing) gap_request_security_level(handle, LEVEL_2);
+      break;
+    }
+    case HCI_EVENT_DISCONNECTION_COMPLETE: {
+      hci_con_handle_t handle = hci_event_disconnection_complete_get_connection_handle(packet);
+      if (usb.trace) fprintf(stderr, "usb-wii: ACL disconnected (0x%02x)\n",
+                             hci_event_disconnection_complete_get_reason(packet));
+      for (unsigned i = 0; i < REMOTE_PLAYERS; i++) {
+        WiiRemote *remote = &usb.remotes[i];
+        if (address_set(remote->address) && remote->handle == handle) lost(remote);
       }
       break;
     }
-    case HCI_EVENT_ROLE_CHANGE:
-      if (usb.trace)
-        fprintf(stderr, "usb-wii: ACL role %u (0x%02x)\n",
-                hci_event_role_change_get_role(packet), hci_event_role_change_get_status(packet));
+    case GAP_EVENT_PAIRING_COMPLETE: {
+      bd_addr_t address;
+      gap_event_pairing_complete_get_bd_addr(packet, address);
+      WiiRemote *remote = by_address(address);
+      uint8_t status = gap_event_pairing_complete_get_status(packet);
+      if (usb.trace && remote) fprintf(stderr, "usb-wii: pairing finished (0x%02x)\n", status);
+      // Some Wii-compatible remotes use a fixed PIN. Try it once after an explicit pairing fails.
+      if (remote && remote->outgoing && remote->pin_requested && !remote->alternate_pin &&
+          (status == ERROR_CODE_AUTHENTICATION_FAILURE || status == ERROR_CODE_PIN_OR_KEY_MISSING)) {
+        memcpy(usb.retry_address, address, sizeof address);
+        disconnect_remote(remote);
+      }
       break;
-    case HCI_EVENT_DISCONNECTION_COMPLETE:
-      if (usb.trace)
-        fprintf(stderr, "usb-wii: ACL disconnected (0x%02x)\n",
-                hci_event_disconnection_complete_get_reason(packet));
-      break;
-    case HCI_EVENT_LINK_KEY_REQUEST:
-      if (usb.trace) fprintf(stderr, "usb-wii: controller requested a stored link key\n");
-      break;
-    case GAP_EVENT_SECURITY_LEVEL:
-      if (usb.trace)
-        fprintf(stderr, "usb-wii: security level %u (0x%02x)\n",
-                gap_event_security_level_get_security_level(packet), gap_event_security_level_get_status(packet));
-      break;
-    case GAP_EVENT_PAIRING_COMPLETE:
-      if (usb.trace && address_set(usb.peer))
-        fprintf(stderr, "usb-wii: pairing finished (0x%02x)\n", gap_event_pairing_complete_get_status(packet));
-      break;
+    }
     case HCI_EVENT_PIN_CODE_REQUEST: {
       bd_addr_t address;
       hci_event_pin_code_request_get_bd_addr(packet, address);
-      if (address_set(usb.peer) && memcmp(address, usb.peer, sizeof address) == 0)
-        gap_pin_code_response_binary(address, usb.pin, sizeof usb.pin);
-      else gap_pin_code_negative(address);
+      WiiRemote *remote = by_address(address);
+      if (!remote) gap_pin_code_negative(address);
+      else {
+        remote->pin_requested = 1;
+        if (remote->alternate_pin) gap_pin_code_response(address, "0000");
+        else gap_pin_code_response_binary(address, usb.pin, sizeof usb.pin);
+      }
       break;
     }
   }
@@ -367,13 +505,14 @@ static void browser_messages(btstack_data_source_t *source, btstack_data_source_
   SessionMessage report;
   int read;
   while ((read = session_read(usb.socket, &report, MSG_DONTWAIT)) > 0) {
-    if (report.type != REMOTE_OUTPUT || !report.size || !usb.connected) continue;
-    if (usb.count == OUTPUT_QUEUE) {
-      fprintf(stderr, "usb-wii: output queue full\n");
-      break;
+    if (report.type == USB_DISCOVERY && report.size == 1) {
+      usb.discovery = report.data[0] != 0;
+      if (!usb.discovery && usb.inquiry) gap_inquiry_stop();
+      rescan();
+    } else if (report.type == REMOTE_OUTPUT && report.size) {
+      WiiRemote *remote = by_player(report.player);
+      if (remote) queue_report(remote, report.data, report.size);
     }
-    usb.queue[(usb.head + usb.count++) % OUTPUT_QUEUE] = report;
-    send_reports();
   }
   if (read == 0) {
     usb.stopping = 1;
@@ -393,9 +532,8 @@ static void *run_usb(void *argument) {
     hci_set_master_slave_policy(HCI_ROLE_MASTER);
     l2cap_init();
     gap_set_bondable_mode(1);
+    gap_register_classic_connection_filter(accept_connection);
     gap_ssp_set_enable(0);
-    // The red SYNC button makes the remote answer limited Wii console inquiries.
-    gap_inquiry_set_lap(GAP_IAC_LIMITED_INQUIRY);
     gap_set_security_level(LEVEL_2);
     l2cap_register_service(channels, PSM_HID_CONTROL, REPORT_MTU, LEVEL_2);
     l2cap_register_service(channels, PSM_HID_INTERRUPT, REPORT_MTU, LEVEL_2);
@@ -421,6 +559,7 @@ int usb_remote_start(pthread_t *thread) {
   int sockets[2];
   if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets)) return -1;
   usb.socket = sockets[1];
+  usb.discovery = 1;
   usb.trace = getenv("JUST_DANCE_USB_TRACE") != NULL;
   int error = pthread_create(thread, NULL, run_usb, NULL);
   if (!error) return sockets[0];

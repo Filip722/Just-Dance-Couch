@@ -28,8 +28,14 @@ enum {
   WORKER_SOCKET = 3, STOP_GRACE_MS = 6000,
   DPAD_BUTTONS = BUTTON_LEFT | BUTTON_RIGHT | BUTTON_UP | BUTTON_DOWN,
   DPAD_REPEAT_DELAY_MS = 350, DPAD_REPEAT_INTERVAL_MS = 110,
+  REMOTE_LEDS = 0x11, PLAYER_ONE_LED = 0x10,
 };
 enum ReturnReason { RUNNING, COMPLETED, CANCELLED };
+
+typedef struct {
+  int fd, connected;
+  uint8_t address[REMOTE_ADDRESS_BYTES];
+} BrowserRemote;
 
 typedef struct {
   SDL_Window *window;
@@ -37,68 +43,109 @@ typedef struct {
   SongGrid *grid;
   char *program;
   pid_t worker;
-  int socket, remote, loopback, release_required, recap, playing, active, warm_next, library_ready;
+  int socket, loopback, release_required, recap, playing, active, warm_next, library_ready;
   int edition, worker_edition, row, first_row, pending_song, edition_focused;
-  int usb, usb_remote, usb_available;
+  int usb, usb_available;
   pthread_t usb_thread;
   uint16_t held;
   uint64_t launch_started, stop_at, repeat_at;
-  uint8_t address[6];
+  BrowserRemote remotes[REMOTE_PLAYERS];
   enum ReturnReason reason;
   const char *status;
 } Browser;
 
-static int has_remote(const Browser *browser) {
-  return browser->remote >= 0 || browser->usb_remote;
+static int first_remote(const Browser *browser) {
+  for (int player = 0; player < REMOTE_PLAYERS; player++)
+    if (browser->remotes[player].connected) return player;
+  return -1;
 }
 
-static void write_remote(const Browser *browser, const uint8_t *report, unsigned size) {
-  if (browser->remote >= 0) (void)write(browser->remote, report, size);
-  else if (browser->usb_remote) session_send(browser->usb, REMOTE_OUTPUT, report, size);
+static int free_remote(const Browser *browser) {
+  for (int player = 0; player < REMOTE_PLAYERS; player++)
+    if (!browser->remotes[player].connected) return player;
+  return -1;
 }
 
-static void menu_reports(const Browser *browser) {
-  const uint8_t player_one_led[] = {0x11, 0x10};
+static void write_remote(const Browser *browser, unsigned player, const uint8_t *report, unsigned size) {
+  const BrowserRemote *remote = &browser->remotes[player];
+  if (!remote->connected) return;
+  if (remote->fd >= 0) (void)write(remote->fd, report, size);
+  else if (browser->usb_available) session_send_player(browser->usb, REMOTE_OUTPUT, player, report, size);
+}
+
+static void menu_reports(const Browser *browser, unsigned player) {
+  const uint8_t player_led[] = {REMOTE_LEDS, PLAYER_ONE_LED << player};
   const uint8_t buttons_only[] = {0x12, 0x04, 0x30};
-  write_remote(browser, player_one_led, sizeof player_one_led);
-  write_remote(browser, buttons_only, sizeof buttons_only);
+  write_remote(browser, player, player_led, sizeof player_led);
+  write_remote(browser, player, buttons_only, sizeof buttons_only);
 }
 
-static void remote_connected(Browser *browser) {
-  browser->release_required = 1;
-  if (browser->active) session_send(browser->socket, REMOTE_CONNECTED, browser->address, sizeof browser->address);
-  else menu_reports(browser);
+static void set_usb_discovery(const Browser *browser, uint8_t enabled) {
+  if (browser->usb_available) session_send(browser->usb, USB_DISCOVERY, &enabled, sizeof enabled);
 }
 
-static void remote_disconnected(Browser *browser) {
-  browser->held = 0;
-  browser->release_required = 1;
-  if (browser->active) session_send(browser->socket, REMOTE_DISCONNECTED, NULL, 0);
+static void attach_to_worker(const Browser *browser, unsigned player) {
+  const BrowserRemote *remote = &browser->remotes[player];
+  session_send_player(browser->socket, REMOTE_CONNECTED, player, remote->address, sizeof remote->address);
 }
 
-static void find_remote(Browser *browser) {
+static void remote_connected(Browser *browser, int player, const uint8_t *address) {
+  BrowserRemote *remote = &browser->remotes[player];
+  memcpy(remote->address, address, sizeof remote->address);
+  remote->connected = 1;
+  if (player == first_remote(browser)) {
+    browser->held = 0;
+    browser->release_required = 1;
+  }
+  menu_reports(browser, player);
+  if (browser->active && browser->reason == RUNNING) attach_to_worker(browser, player);
+}
+
+static void remote_disconnected(Browser *browser, int player) {
+  BrowserRemote *remote = &browser->remotes[player];
+  if (!remote->connected) return;
+  if (player == first_remote(browser)) {
+    browser->held = 0;
+    browser->release_required = 1;
+  }
+  remote->connected = 0;
+  if (browser->active && browser->reason == RUNNING)
+    session_send_player(browser->socket, REMOTE_DISCONNECTED, player, NULL, 0);
+}
+
+static int has_address(const Browser *browser, const uint8_t *address) {
+  for (int player = 0; player < REMOTE_PLAYERS; player++) {
+    const BrowserRemote *remote = &browser->remotes[player];
+    if (remote->connected && !memcmp(address, remote->address, sizeof remote->address)) return 1;
+  }
+  return 0;
+}
+
+static void find_remotes(Browser *browser) {
+  int player = free_remote(browser);
+  if (player < 0) return;
   DIR *devices = opendir("/dev");
   if (!devices) return;
   struct dirent *entry;
-  while ((entry = readdir(devices))) {
+  while (player >= 0 && (entry = readdir(devices))) {
     if (strncmp(entry->d_name, "hidraw", 6)) continue;
     int fd = openat(dirfd(devices), entry->d_name, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) continue;
     struct hidraw_devinfo info;
     char name[256] = {0}, unique[64] = {0}, driver[64];
+    uint8_t address[REMOTE_ADDRESS_BYTES];
     if (ioctl(fd, HIDIOCGRAWINFO, &info) == 0 &&
         link_hidraw_is_remote(info.bustype, (uint16_t)info.vendor, (uint16_t)info.product) &&
         ioctl(fd, HIDIOCGRAWNAME(sizeof name - 1), name) >= 0 &&
         !strncmp(name, "Nintendo RVL-CNT-01", sizeof "Nintendo RVL-CNT-01" - 1) &&
         ioctl(fd, HIDIOCGRAWUNIQ(sizeof unique - 1), unique) >= 0 &&
-        link_hidraw_address(unique, browser->address) &&
+        link_hidraw_address(unique, address) && !has_address(browser, address) &&
         !(link_hidraw_driver("/sys/class/hidraw", entry->d_name, driver, sizeof driver) &&
           !strcmp(driver, "wiimote"))) {
-      browser->remote = fd;
-      remote_connected(browser);
-      break;
-    }
-    close(fd);
+      browser->remotes[player].fd = fd;
+      remote_connected(browser, player, address);
+      player = free_remote(browser);
+    } else close(fd);
   }
   closedir(devices);
 }
@@ -141,7 +188,7 @@ static void end_dance(Browser *browser, enum ReturnReason reason);
 static void start_dance(Browser *browser) {
   const char *map = editions[browser->edition].songs[browser->row].map;
   if (!map) return;
-  if (!browser->loopback && !has_remote(browser)) return;
+  if (!browser->loopback && !browser->remotes[0].connected) return;
   if (browser->worker && (browser->worker_edition != browser->edition || browser->reason != RUNNING)) {
     browser->pending_song = 1;
     end_dance(browser, CANCELLED);
@@ -161,7 +208,9 @@ static void start_dance(Browser *browser) {
   browser->launch_started = SDL_GetTicks();
   browser->status = NULL;
   browser->release_required = 1;
-  if (!browser->loopback) session_send(browser->socket, REMOTE_CONNECTED, browser->address, sizeof browser->address);
+  set_usb_discovery(browser, 0);
+  for (unsigned player = 0; player < REMOTE_PLAYERS; player++)
+    if (browser->remotes[player].connected) attach_to_worker(browser, player);
   fprintf(stderr, "couch: launched %s\n", editions[browser->edition].songs[browser->row].title);
 }
 
@@ -258,28 +307,38 @@ static uint16_t keyboard_button(SDL_Keycode key) {
   }
 }
 
-static void handle_report(Browser *browser, uint8_t *report, unsigned length) {
+static void handle_report(Browser *browser, int player, uint8_t *report, unsigned length) {
   if (length >= 3 && report[0] >= 0x20 && report[0] <= 0x3f) {
+    uint16_t controls = report[1] | (uint16_t)report[2] << 8;
     const uint16_t actions = DPAD_BUTTONS | BUTTON_A | BUTTON_HOME;
-    update_buttons(browser, (report[1] | (uint16_t)report[2] << 8) & actions);
-    report[2] &= (uint8_t)~(BUTTON_HOME >> 8);
+    if (player == first_remote(browser)) update_buttons(browser, controls & actions);
+    else if (browser->active && !browser->playing) {
+      // Keep motion bits while the primary remote drives the hidden menus.
+      const uint16_t buttons = DPAD_BUTTONS | BUTTON_PLUS | BUTTON_TWO | BUTTON_ONE |
+                               BUTTON_B | BUTTON_A | BUTTON_MINUS | BUTTON_HOME;
+      controls &= ~buttons;
+    }
+    report[1] = controls;
+    report[2] = (controls & ~BUTTON_HOME) >> 8;
   }
-  if (browser->active && browser->reason == RUNNING) session_send(browser->socket, REMOTE_INPUT, report, length);
+  if (browser->active && browser->reason == RUNNING)
+    session_send_player(browser->socket, REMOTE_INPUT, player, report, length);
 }
 
-static void remote_reports(Browser *browser) {
+static void remote_reports(Browser *browser, int player) {
+  BrowserRemote *remote = &browser->remotes[player];
   uint8_t report[32];
   for (;;) {
-    ssize_t length = read(browser->remote, report, sizeof report);
-    if (length < 0 && errno == EAGAIN) return;
+    ssize_t length = read(remote->fd, report, sizeof report);
+    if (length < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
     if (length < 0 && errno == EINTR) continue;
     if (length <= 0) {
-      close(browser->remote);
-      browser->remote = -1;
-      remote_disconnected(browser);
+      close(remote->fd);
+      remote->fd = -1;
+      remote_disconnected(browser, player);
       return;
     }
-    handle_report(browser, report, length);
+    handle_report(browser, player, report, length);
   }
 }
 
@@ -287,20 +346,17 @@ static void usb_reports(Browser *browser) {
   SessionMessage message;
   int read;
   while ((read = session_read(browser->usb, &message, MSG_DONTWAIT)) > 0) {
-    if (message.type == REMOTE_CONNECTED && message.size == sizeof browser->address) {
-      memcpy(browser->address, message.data, message.size);
-      browser->usb_remote = 1;
-      remote_connected(browser);
-    } else if (message.type == REMOTE_DISCONNECTED) {
-      browser->usb_remote = 0;
-      remote_disconnected(browser);
-    } else if (message.type == REMOTE_INPUT && message.size && browser->usb_remote) {
-      handle_report(browser, message.data, message.size);
-    }
+    int player = message.player;
+    if (message.type == REMOTE_CONNECTED && message.size == REMOTE_ADDRESS_BYTES)
+      remote_connected(browser, player, message.data);
+    else if (message.type == REMOTE_DISCONNECTED)
+      remote_disconnected(browser, player);
+    else if (message.type == REMOTE_INPUT && message.size && browser->remotes[player].connected)
+      handle_report(browser, player, message.data, message.size);
   }
   if (read == 0) {
-    if (browser->usb_remote) remote_disconnected(browser);
-    browser->usb_remote = browser->usb_available = 0;
+    for (int player = 0; player < REMOTE_PLAYERS; player++) remote_disconnected(browser, player);
+    browser->usb_available = 0;
     browser->status = "Nintendo USB adapter unavailable";
   }
 }
@@ -312,8 +368,11 @@ static void update_worker(Browser *browser) {
       browser->library_ready = 1;
       fprintf(stderr, "couch: native song library ready\n");
     }
-    if (message.type == REMOTE_OUTPUT && browser->active && browser->reason == RUNNING)
-      write_remote(browser, message.data, message.size);
+    if (message.type == REMOTE_OUTPUT && message.size && browser->active && browser->reason == RUNNING) {
+      if (message.data[0] == REMOTE_LEDS && message.size >= 2)
+        message.data[1] = (message.data[1] & 0x0f) | (PLAYER_ONE_LED << message.player);
+      write_remote(browser, message.player, message.data, message.size);
+    }
     if (message.type == GAME_VISIBLE && browser->reason == RUNNING) {
       browser->playing = 1;
       SDL_HideWindow(browser->window);
@@ -356,7 +415,9 @@ static void update_worker(Browser *browser) {
   else if (WIFEXITED(status) && WEXITSTATUS(status) == 10) browser->status = "Playback could not start. Check the disc cache";
   else if (WIFEXITED(status) && WEXITSTATUS(status) == 2) browser->status = "The game could not load the selected routine";
   else browser->status = "Playback ended unexpectedly";
-  menu_reports(browser);
+  set_usb_discovery(browser, 1);
+  for (unsigned player = 0; player < REMOTE_PLAYERS; player++)
+    if (browser->remotes[player].connected) menu_reports(browser, player);
   SDL_ShowWindow(browser->window);
   SDL_RaiseWindow(browser->window);
   fprintf(stderr, "couch: %s. Selected row: %s\n", browser->status, editions[browser->edition].songs[browser->row].title);
@@ -364,8 +425,10 @@ static void update_worker(Browser *browser) {
 
 static void paint(const Browser *browser) {
   const char *hint = browser->status;
-  if (!hint && !browser->loopback && !has_remote(browser))
-    hint = browser->usb >= 0 ? "Wake your Wii Remote or press SYNC" : "Connect a Wii Remote";
+  if (!browser->loopback && !browser->remotes[0].connected) {
+    if (first_remote(browser) > 0) hint = "Connect a Wii Remote as Player 1 to start";
+    else if (!hint) hint = browser->usb >= 0 ? "Wake your Wii Remote or press SYNC" : "Connect a Wii Remote";
+  }
   int preview = !browser->active && !browser->pending_song && !browser->edition_focused ? browser->row : -1;
   song_grid_preview(browser->grid, browser->edition, preview);
   int loading = browser->pending_song || (browser->active && browser->reason == RUNNING);
@@ -391,7 +454,8 @@ int main(int count, char **arguments) {
     return 2;
   }
 
-  Browser browser = {.program = program, .remote = -1, .usb = -1, .loopback = loopback};
+  Browser browser = {.program = program, .usb = -1, .loopback = loopback};
+  for (unsigned player = 0; player < REMOTE_PLAYERS; player++) browser.remotes[player].fd = -1;
   if (!SDL_Init(SDL_INIT_VIDEO) ||
       !SDL_CreateWindowAndRenderer("Just Dance Couch", 960, 540, SDL_WINDOW_FULLSCREEN,
                                    &browser.window, &browser.renderer)) {
@@ -432,12 +496,13 @@ int main(int count, char **arguments) {
       }
     }
     uint64_t now = SDL_GetTicks();
-    if (!usb_mode && !browser.loopback && browser.remote < 0 && now >= next_scan) {
-      find_remote(&browser);
+    if (!usb_mode && !browser.loopback && now >= next_scan) {
+      find_remotes(&browser);
       next_scan = now + 1000;
     }
     if (browser.usb_available) usb_reports(&browser);
-    if (browser.remote >= 0) remote_reports(&browser);
+    for (int player = 0; player < REMOTE_PLAYERS; player++)
+      if (browser.remotes[player].fd >= 0) remote_reports(&browser, player);
     if (!quit) repeat_dpad(&browser, now);
     if (browser.worker) update_worker(&browser);
     // Start warming once horizontal browsing stops on an edition.
@@ -455,7 +520,8 @@ int main(int count, char **arguments) {
       SDL_Delay(10);
     }
   }
-  if (browser.remote >= 0) close(browser.remote);
+  for (unsigned player = 0; player < REMOTE_PLAYERS; player++)
+    if (browser.remotes[player].fd >= 0) close(browser.remotes[player].fd);
   if (browser.usb >= 0) usb_remote_stop(browser.usb, browser.usb_thread);
   song_grid_destroy(browser.grid);
   SDL_DestroyRenderer(browser.renderer);
