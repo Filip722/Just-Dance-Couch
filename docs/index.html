@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#161422">
+  <title>Just Dance Couch – Play Just Dance Wii on a Linux PC</title>
+  <meta name="description" content="Play Just Dance on PC with your own Wii disc backups. Explore 18 Wii editions, offline play and Wii Remote motion scoring in this unofficial Linux launcher.">
+  <link rel="canonical" href="https://filip722.github.io/Just-Dance-Couch/">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Just Dance Couch – Your Wii collection on Linux">
+  <meta property="og:description" content="Pick a song, grab a Wii Remote and dance. An unofficial Linux launcher for your own Just Dance Wii backups.">
+  <meta property="og:url" content="https://filip722.github.io/Just-Dance-Couch/">
+  <meta property="og:image" content="https://filip722.github.io/Just-Dance-Couch/share.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Just Dance Couch beside four-player Ghostbusters gameplay from Just Dance 2014">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Just Dance Couch – Your Wii collection on Linux">
+  <meta name="twitter:description" content="Play your own Just Dance Wii discs on a Linux PC with the original choreography and Wii Remote scoring.">
+  <meta name="twitter:image" content="https://filip722.github.io/Just-Dance-Couch/share.jpg">
+  <meta name="twitter:image:alt" content="Just Dance Couch beside the four Ghostbusters coaches on stage">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Just Dance Couch",
+    "url": "https://filip722.github.io/Just-Dance-Couch/",
+    "description": "An unofficial Linux launcher for playing supported Just Dance Wii disc backups with their original choreography and motion scoring.",
+    "applicationCategory": "GameApplication",
+    "operatingSystem": "Linux",
+    "processorRequirements": "x86-64-v3 (AVX2 and FMA)",
+    "softwareRequirements": "Working Vulkan driver, Python 3.12 or newer and the documented native build tools",
+    "downloadUrl": "https://github.com/Filip722/Just-Dance-Couch/archive/26e484105dd560e28f6794220cb9316770522871.zip",
+    "screenshot": "https://filip722.github.io/Just-Dance-Couch/screenshots/song-grid.webp",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="wrap">
+    <a class="brand" href="./"><img src="icon.svg" width="32" height="32" alt="">Just Dance Couch</a>
+    <nav aria-label="Main navigation">
+      <a href="#features">Features</a><a href="#games">Games</a><a href="#setup">Setup</a><a href="#faq">FAQ</a>
+    </nav>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="kicker">Wii rhythm games on Linux</p>
+        <h1 id="hero-title">Just Dance <span>Couch</span></h1>
+        <p class="intro">Bring your Just Dance Wii collection to your Linux PC. Pick a song, grab a Wii Remote and follow the original choreography.</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/Filip722/Just-Dance-Couch/archive/26e484105dd560e28f6794220cb9316770522871.zip">Download source <small>ZIP</small></a>
+          <a class="button secondary" href="https://github.com/Filip722/Just-Dance-Couch">View on GitHub</a>
+        </div>
+        <p class="note">Unofficial fan project. Build locally with your own disc backups.</p>
+      </div>
+      <div class="sleeve">
+        <div class="record" aria-hidden="true"></div>
+        <figure class="cover">
+          <img src="screenshots/gameplay.webp" width="640" height="456" fetchpriority="high" alt="Three Ghostbusters coaches and Slimer on stage, with four player markers and the next moves along the bottom">
+          <figcaption><span>Ghostbusters</span> Just Dance 2014</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="features" class="band">
+      <div class="wrap">
+        <p class="kicker pink">Inside the launcher</p>
+        <h2>From song picker to dance floor</h2>
+        <div class="features">
+          <figure>
+            <a href="screenshots/song-grid.webp" aria-label="Open the full-size song library screenshot"><img src="screenshots/song-grid.webp" width="1600" height="900" loading="lazy" alt="Just Dance 2014 song library with Get Lucky highlighted in the five-column grid"></a>
+            <figcaption><h3>Find your next song</h3><p>Switch editions and browse songs alphabetically. Listen to a preview and watch the coach where video is available. Start a routine straight from the grid and press HOME to return.</p></figcaption>
+          </figure>
+          <figure>
+            <a href="screenshots/coach-picker.webp" aria-label="Open the full-size dancer selection screenshot"><img src="screenshots/coach-picker.webp" width="1600" height="900" loading="lazy" alt="Get Lucky dancer selection screen with Player 1 assigned to the silver coach"></a>
+            <figcaption><h3>Pick a dancer with friends</h3><p>Connect up to four Wii Remotes for the original motion scoring. On supported multi-coach routines, each player can choose a dancer before the music starts.</p></figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="games" class="wrap section">
+      <div class="split">
+        <div><p class="kicker">Disc library</p><h2>18 supported <br>Wii editions</h2>
+          <p>Match the region and revision of your disc before building. Most use USA revision 0. Just Dance 3 uses USA revision 1, and Just Dance 2020 uses Europe revision 0.</p>
+          <a href="https://github.com/Filip722/Just-Dance-Couch/blob/main/docs/disc-images.md">Check disc IDs and hashes</a>
+        </div>
+        <dl class="editions">
+          <div><dt>Original series</dt><dd>Just Dance, Just Dance 2, Just Dance 3 and Just Dance 4</dd></div>
+          <div><dt>Annual editions</dt><dd>Just Dance 2014, 2015, 2016, 2017, 2018, 2019 and 2020</dd></div>
+          <div><dt>Compilations</dt><dd>Just Dance Summer Party and Just Dance Greatest Hits</dd></div>
+          <div><dt>Kids &amp; Disney</dt><dd>Just Dance Kids, Kids 2, Kids 2014, Disney Party and Disney Party 2</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section id="setup" class="band">
+      <div class="wrap split">
+        <div><p class="kicker pink">Getting started</p><h2>Set up your Linux PC</h2>
+          <h3>System requirements</h3>
+          <ul class="requirements">
+            <li>Linux desktop with an x86-64-v3 processor (AVX2 and FMA) and a working Vulkan graphics driver.</li>
+            <li>Python 3.12+, Clang, Rust 1.85+ with Cargo, FFmpeg and the build packages in the setup guide.</li>
+            <li>Several gigabytes of temporary build space and a supported ISO, RVZ or WBFS disc backup.</li>
+          </ul>
+          <p class="platform">Confirmed on <strong>Bazzite 44</strong>.</p>
+        </div>
+        <ol class="steps">
+          <li><h3>Get the source and tools</h3><p>Download and unzip the source, then open a terminal in the extracted folder. Install the <a href="https://github.com/Filip722/Just-Dance-Couch#1-install-the-build-dependencies">build dependencies</a> for your distribution. The guide includes a Debian 13 package list.</p></li>
+          <li><h3>Build a game and its picker</h3><p>This example uses Just Dance 2014 (USA, revision 0). Replace the image path with your backup. For another edition, change the disc ID too.</p>
+            <pre tabindex="0" role="region" aria-label="Build commands"><code>python3 -B pilot.py build --disc SJOE41 \
+  --image "/path/to/Just Dance 2014.rvz"
+python3 -B pilot.py couch</code></pre>
+          </li>
+          <li><h3>Launch your first song</h3><p>Try the song picker with the arrow keys and Enter. For motion scoring, follow the <a href="https://github.com/Filip722/Just-Dance-Couch#wii-remotes">Wii Remote pairing guide</a>.</p>
+            <pre tabindex="0" role="region" aria-label="Launch commands"><code>cache="${XDG_CACHE_HOME:-$HOME/.cache}"
+"$cache/just-dance-couch/bin/just-dance-couch" --loopback</code></pre>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="faq" class="wrap section split">
+      <div><p class="kicker">FAQ</p><h2>Before you play</h2></div>
+      <div class="answers">
+        <details open><summary>Can I play Just Dance on PC without Dolphin?</summary><p>Yes, on a compatible Linux PC. Just Dance Couch uses Wii Recomp to translate the Wii game code from your own disc backup into a program that runs on your computer. The launcher starts each routine directly.</p></details>
+        <details><summary>Can I play Just Dance offline?</summary><p>The first build needs internet access to fetch tools and runtime sources. After setup, you can play offline with local disc images. Keep the original images accessible during play. If they live on a network share, you still need a connection to that share.</p></details>
+        <details><summary>How do I use a Wii Remote on PC?</summary><p>For direct pairing, attach a Nintendo Wii Bluetooth module (USB ID <code>057e:0305</code>), grant your user access, then start the launcher with <code>--usb-wii</code>. Press the red SYNC button inside each remote. A remote paired through Linux BlueZ can also work with a readable and writable <code>hidraw</code> device.</p></details>
+        <details><summary>Does the download include games or songs?</summary><p>The free download contains the launcher source. Supply backups of Wii discs you own. You can also import your own Wii add-ons for the supported USA editions of Just Dance 2, 3, 4, 2014 and 2015.</p></details>
+      </div>
+    </section>
+  </main>
+  <footer><div class="wrap"><div><a class="brand" href="./"><img src="icon.svg" width="28" height="28" alt="">Just Dance Couch</a><p>Independent fan project. Just Dance and game artwork belong to their respective owners.</p></div><a href="https://github.com/Filip722/Just-Dance-Couch#license-and-credits">License &amp; credits</a></div></footer>
+</body>
+</html>

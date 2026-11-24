@@ -1,5 +1,7 @@
 # Just Dance Couch
 
+**[Visit the Just Dance Couch website](https://filip722.github.io/Just-Dance-Couch/)**
+
 Play your Just Dance Wii collection on Linux from a single fullscreen song picker. Just Dance Couch recompiles your own Wii disc backups with Wii Recomp and launches each song with its original choreography and motion scoring.
 
 [Quick start](#quick-start) · [Disc images and hashes](docs/disc-images.md) · [Wii Remotes](#wii-remotes) · [Configuration](#configuration) · [License](#license-and-credits)
